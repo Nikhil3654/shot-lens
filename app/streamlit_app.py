@@ -15,24 +15,24 @@ st.set_page_config(page_title="Shot Lens", layout="wide")
 
 @st.cache_data
 def load_artifacts():
-    shots_path = ARTIFACTS_DIR / "shot_predictions.parquet"
-    profiles_path = ARTIFACTS_DIR / "player_profiles.parquet"
-    similar_path = ARTIFACTS_DIR / "similar_players.parquet"
+    paths = {
+        "shots": ARTIFACTS_DIR / "shot_predictions_modern.parquet",
+        "profiles": ARTIFACTS_DIR / "player_profiles_modern.parquet",
+        "zones": ARTIFACTS_DIR / "zone_profiles_modern.parquet",
+        "similar": ARTIFACTS_DIR / "similar_players_modern.parquet",
+    }
 
-    missing = [
-        str(path.relative_to(ROOT))
-        for path in [shots_path, profiles_path, similar_path]
-        if not path.exists()
-    ]
+    missing = [str(path) for path in paths.values() if not path.exists()]
 
     if missing:
-        return None, None, None, missing
+        return None, None, None, None, missing
 
-    shots = pd.read_parquet(shots_path)
-    profiles = pd.read_parquet(profiles_path)
-    similar = pd.read_parquet(similar_path)
+    shots = pd.read_parquet(paths["shots"])
+    profiles = pd.read_parquet(paths["profiles"])
+    zones = pd.read_parquet(paths["zones"])
+    similar = pd.read_parquet(paths["similar"])
 
-    return shots, profiles, similar, []
+    return shots, profiles, zones, similar, []
 
 
 def parse_similar_players(value):
@@ -56,6 +56,18 @@ def parse_similar_players(value):
             return [value]
 
     return [str(value)]
+
+
+def format_percent(value):
+    if pd.isna(value):
+        return "N/A"
+    return f"{value:.1%}"
+
+
+def format_number(value, digits=2):
+    if pd.isna(value):
+        return "N/A"
+    return f"{value:.{digits}f}"
 
 
 def make_shot_chart(player_shots):
@@ -111,127 +123,238 @@ def make_shot_chart(player_shots):
     return fig
 
 
-def make_style_chart(profile):
-    labels = ["Rim", "Midrange", "Corner 3", "Above Break 3"]
-    columns = ["rim_rate", "midrange_rate", "corner_3_rate", "above_break_3_rate"]
-
-    df = pd.DataFrame({
-        "Shot Area": labels,
-        "Rate": [float(profile[col]) for col in columns],
-    })
+def make_zone_chart(zone_data):
+    plot_data = zone_data.sort_values("expected_points_per_shot", ascending=False)
 
     fig = px.bar(
-        df,
-        x="Shot Area",
-        y="Rate",
-        text=df["Rate"].map(lambda x: f"{x:.1%}"),
-        color="Shot Area",
-        color_discrete_sequence=["#2563eb", "#dc2626", "#16a34a", "#9333ea"],
-        height=340,
+        plot_data,
+        x="SHOT_ZONE_BASIC",
+        y=["actual_points_per_shot", "expected_points_per_shot"],
+        barmode="group",
+        height=420,
+        labels={
+            "value": "Points Per Shot",
+            "SHOT_ZONE_BASIC": "Zone",
+            "variable": "Metric",
+        },
     )
 
-    fig.update_traces(textposition="outside")
     fig.update_layout(
-        showlegend=False,
-        yaxis_tickformat=".0%",
-        yaxis_title="Share of Attempts",
-        xaxis_title="",
-        margin=dict(l=20, r=20, t=20, b=20),
+        margin=dict(l=20, r=20, t=20, b=80),
+        legend_title_text="",
     )
 
     return fig
 
 
-st.title("Shot Lens")
-st.caption("NBA expected shot value, player style, and shot profile analytics")
+def make_comparison_chart(compare_df, metric):
+    fig = px.line(
+        compare_df,
+        x="SEASON",
+        y=metric,
+        markers=True,
+        height=380,
+    )
+    fig.update_layout(
+        margin=dict(l=20, r=20, t=20, b=20),
+        xaxis_title="Season",
+        yaxis_title=metric,
+    )
+    return fig
 
-shots, profiles, similar, missing = load_artifacts()
+
+st.title("Shot Lens")
+st.caption("NBA shot quality, shot making, and advanced player analytics")
+
+shots, profiles, zones, similar, missing = load_artifacts()
 
 if missing:
-    st.warning("The app is ready, but these artifact files are missing:")
+    st.warning("Missing artifact files:")
     for file in missing:
         st.code(file)
     st.stop()
 
-players = sorted(profiles["PLAYER_NAME"].dropna().unique())
-player = st.sidebar.selectbox("Player", players)
+profiles["PLAYER_ID"] = profiles["PLAYER_ID"].astype(str)
+shots["PLAYER_ID"] = shots["PLAYER_ID"].astype(str)
+zones["PLAYER_ID"] = zones["PLAYER_ID"].astype(str)
+similar["PLAYER_ID"] = similar["PLAYER_ID"].astype(str)
 
-seasons = sorted(
-    profiles.loc[profiles["PLAYER_NAME"] == player, "SEASON"]
-    .dropna()
-    .unique()
+profiles["SEASON"] = profiles["SEASON"].astype(str)
+shots["SEASON"] = shots["SEASON"].astype(str)
+zones["SEASON"] = zones["SEASON"].astype(str)
+similar["SEASON"] = similar["SEASON"].astype(str)
+
+mode = st.sidebar.radio(
+    "View",
+    [
+        "Single Player Season",
+        "Player Year Comparison",
+    ],
 )
-season = st.sidebar.selectbox("Season", seasons)
 
-player_shots = shots[
-    (shots["PLAYER_NAME"] == player) &
-    (shots["SEASON"] == season)
-].copy()
+players = sorted(profiles["PLAYER_NAME"].dropna().unique())
 
-profile_row = profiles[
-    (profiles["PLAYER_NAME"] == player) &
-    (profiles["SEASON"] == season)
-]
+if mode == "Single Player Season":
+    player = st.sidebar.selectbox("Player", players)
 
-if player_shots.empty or profile_row.empty:
-    st.error("No data found for that player-season.")
-    st.stop()
+    seasons = sorted(
+        profiles.loc[profiles["PLAYER_NAME"] == player, "SEASON"]
+        .dropna()
+        .unique()
+    )
 
-profile = profile_row.iloc[0]
+    season = st.sidebar.selectbox("Season", seasons)
 
-col1, col2, col3, col4 = st.columns(4)
+    player_profile = profiles[
+        (profiles["PLAYER_NAME"] == player) &
+        (profiles["SEASON"] == season)
+    ]
 
-col1.metric("Shots", f"{int(profile['shots']):,}")
-col2.metric("Expected Points", f"{profile['expected_points']:.1f}")
-col3.metric("Actual Points", f"{profile['actual_points']:.1f}")
-col4.metric("Points Above Expected", f"{profile['points_above_expected']:.1f}")
+    player_shots = shots[
+        (shots["PLAYER_NAME"] == player) &
+        (shots["SEASON"] == season)
+    ]
 
-left, right = st.columns([2, 1])
+    player_zones = zones[
+        (zones["PLAYER_NAME"] == player) &
+        (zones["SEASON"] == season)
+    ]
 
-with left:
+    if player_profile.empty:
+        st.error("No profile found for that player-season.")
+        st.stop()
+
+    profile = player_profile.iloc[0]
+
+    st.subheader(f"{player} - {season}")
+
+    col1, col2, col3, col4 = st.columns(4)
+
+    col1.metric("Actual PPS", format_number(profile["actual_points_per_shot"]))
+    col2.metric("Expected PPS", format_number(profile["expected_points_per_shot"]))
+    col3.metric(
+        "Pts Above Exp / 100",
+        format_number(profile["points_above_expected_per_100"]),
+    )
+    col4.metric("Avg Make Prob", format_percent(profile["avg_make_prob"]))
+
+    col5, col6, col7, col8 = st.columns(4)
+
+    col5.metric("TS%", format_percent(profile.get("TS_PCT")))
+    col6.metric("Usage%", format_percent(profile.get("USG_PCT")))
+    col7.metric("Net Rating", format_number(profile.get("NET_RATING")))
+    col8.metric("PIE", format_percent(profile.get("PIE")))
+
     st.subheader("Shot Chart")
     st.plotly_chart(make_shot_chart(player_shots), use_container_width=True)
 
-with right:
-    st.subheader("Player Style")
-    st.plotly_chart(make_style_chart(profile), use_container_width=True)
+    st.subheader("Zone Shot Quality vs Results")
+    st.plotly_chart(make_zone_chart(player_zones), use_container_width=True)
 
-    st.subheader("Archetype")
-    st.info(profile["archetype"])
+    st.subheader("Best / Worst Zones")
+    b1, b2 = st.columns(2)
+    b1.info(f"Best zone: {profile.get('best_zone', 'N/A')}")
+    b2.warning(f"Worst zone: {profile.get('worst_zone', 'N/A')}")
 
-st.subheader("Zone Summary")
+    st.subheader("Zone Table")
+    display_cols = [
+        "SHOT_ZONE_BASIC",
+        "attempts",
+        "fg_pct",
+        "actual_points_per_shot",
+        "expected_points_per_shot",
+        "points_above_expected_per_100",
+    ]
+    display_cols = [c for c in display_cols if c in player_zones.columns]
 
-zone_summary = (
-    player_shots.groupby("SHOT_ZONE_BASIC")
-    .agg(
-        attempts=("SHOT_MADE_FLAG", "count"),
-        makes=("SHOT_MADE_FLAG", "sum"),
-        actual_points=("ACTUAL_POINTS", "sum"),
-        expected_points=("EXPECTED_POINTS", "sum"),
-        points_above_expected=("POINTS_ABOVE_EXPECTED", "sum"),
+    st.dataframe(
+        player_zones[display_cols].sort_values(
+            "points_above_expected_per_100",
+            ascending=False,
+        ),
+        use_container_width=True,
+        hide_index=True,
     )
-    .reset_index()
-)
 
-zone_summary["fg_pct"] = zone_summary["makes"] / zone_summary["attempts"]
-zone_summary = zone_summary.sort_values("points_above_expected", ascending=False)
+    st.subheader("Similar Players")
 
-st.dataframe(
-    zone_summary,
-    use_container_width=True,
-    hide_index=True,
-)
+    sim_row = similar[
+        (similar["PLAYER_NAME"] == player) &
+        (similar["SEASON"] == season)
+    ]
 
-st.subheader("Similar Players")
+    if sim_row.empty:
+        st.write("No similar players found.")
+    else:
+        sims = parse_similar_players(sim_row.iloc[0]["similar_players"])
+        sim_df = pd.DataFrame(sims)
 
-sim_row = similar[
-    (similar["PLAYER_NAME"] == player) &
-    (similar["SEASON"] == season)
-]
+        if sim_df.empty:
+            st.write("No similar players found.")
+        else:
+            st.dataframe(sim_df, use_container_width=True, hide_index=True)
 
-if sim_row.empty:
-    st.write("No similar players found.")
 else:
-    similar_players = parse_similar_players(sim_row.iloc[0]["similar_players"])
-    for sim_player in similar_players:
-        st.write(f"- {sim_player}")
+    player = st.sidebar.selectbox("Player", players)
+
+    compare_df = profiles[
+        profiles["PLAYER_NAME"] == player
+    ].sort_values("SEASON")
+
+    available_metrics = [
+        "actual_points_per_shot",
+        "expected_points_per_shot",
+        "points_above_expected_per_100",
+        "avg_make_prob",
+        "TS_PCT",
+        "USG_PCT",
+        "NET_RATING",
+        "PIE",
+    ]
+
+    available_metrics = [m for m in available_metrics if m in compare_df.columns]
+
+    selected_metrics = st.sidebar.multiselect(
+        "Metrics",
+        available_metrics,
+        default=[
+            "actual_points_per_shot",
+            "expected_points_per_shot",
+            "points_above_expected_per_100",
+        ],
+    )
+
+    st.subheader(f"{player} - Year Comparison")
+
+    if not selected_metrics:
+        st.info("Select at least one metric.")
+        st.stop()
+
+    for metric in selected_metrics:
+        st.plotly_chart(
+            make_comparison_chart(compare_df, metric),
+            use_container_width=True,
+        )
+
+    table_cols = [
+        "SEASON",
+        "shots",
+        "actual_points_per_shot",
+        "expected_points_per_shot",
+        "points_above_expected_per_100",
+        "avg_make_prob",
+        "TS_PCT",
+        "USG_PCT",
+        "NET_RATING",
+        "PIE",
+        "best_zone",
+        "worst_zone",
+    ]
+
+    table_cols = [c for c in table_cols if c in compare_df.columns]
+
+    st.dataframe(
+        compare_df[table_cols],
+        use_container_width=True,
+        hide_index=True,
+    )
