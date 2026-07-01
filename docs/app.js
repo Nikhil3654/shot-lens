@@ -149,6 +149,20 @@ async function renderPlayerView() {
   renderSimilar(player, season);
 }
 
+function courtShapes() {
+  return [
+    { type: "circle", xref: "x", yref: "y", x0: -7.5, y0: -7.5, x1: 7.5, y1: 7.5, line: { color: "#111827", width: 2 } },
+    { type: "rect", xref: "x", yref: "y", x0: -30, y0: -7.5, x1: 30, y1: -6, line: { color: "#111827", width: 2 }, fillcolor: "#111827" },
+    { type: "rect", xref: "x", yref: "y", x0: -80, y0: -47.5, x1: 80, y1: 143, line: { color: "#334155", width: 2 } },
+    { type: "rect", xref: "x", yref: "y", x0: -60, y0: -47.5, x1: 60, y1: 143, line: { color: "#334155", width: 2 } },
+    { type: "circle", xref: "x", yref: "y", x0: -60, y0: 83, x1: 60, y1: 203, line: { color: "#334155", width: 2 } },
+    { type: "circle", xref: "x", yref: "y", x0: -40, y0: -40, x1: 40, y1: 40, line: { color: "#334155", width: 2 } },
+    { type: "path", xref: "x", yref: "y", path: "M -220 -47.5 L -220 92.5", line: { color: "#334155", width: 2 } },
+    { type: "path", xref: "x", yref: "y", path: "M 220 -47.5 L 220 92.5", line: { color: "#334155", width: 2 } },
+    { type: "path", xref: "x", yref: "y", path: "M -220 92.5 Q 0 300 220 92.5", line: { color: "#334155", width: 2 } },
+  ];
+}
+
 function drawShotChart(shots) {
   const makes = shots.filter((d) => Number(d.SHOT_MADE_FLAG) === 1);
   const misses = shots.filter((d) => Number(d.SHOT_MADE_FLAG) === 0);
@@ -159,7 +173,7 @@ function drawShotChart(shots) {
     mode: "markers",
     type: "scatter",
     name,
-    marker: { color, size: 7, opacity: 0.75 },
+    marker: { color, size: 7, opacity: 0.7, line: { color: "white", width: 0.5 } },
     text: rows.map(
       (d) =>
         `${d.ACTION_TYPE}<br>${d.SHOT_ZONE_BASIC}<br>League EP: ${fmt(d.LEAGUE_EXPECTED_POINTS)}<br>Player EP: ${fmt(d.PLAYER_EXPECTED_POINTS)}`
@@ -169,26 +183,16 @@ function drawShotChart(shots) {
 
   Plotly.newPlot(
     "shotChart",
-    [
-      trace(misses, "Miss", "#dc2626"),
-      trace(makes, "Make", "#16a34a"),
-      {
-        x: [0],
-        y: [0],
-        mode: "markers",
-        type: "scatter",
-        name: "Hoop",
-        marker: { color: "#f97316", size: 14 },
-        hoverinfo: "skip",
-      },
-    ],
+    [trace(misses, "Miss", "#dc2626"), trace(makes, "Make", "#16a34a")],
     {
       title: "Shot Chart",
-      height: 620,
+      height: 660,
       plot_bgcolor: "#f8f4ea",
-      xaxis: { title: "Court X" },
-      yaxis: { title: "Court Y", scaleanchor: "x", scaleratio: 1 },
-      margin: { l: 40, r: 20, t: 40, b: 40 },
+      paper_bgcolor: "#ffffff",
+      shapes: courtShapes(),
+      xaxis: { title: "", range: [-250, 250], showgrid: false, zeroline: false },
+      yaxis: { title: "", range: [-60, 420], showgrid: false, zeroline: false, scaleanchor: "x", scaleratio: 1 },
+      margin: { l: 20, r: 20, t: 40, b: 20 },
     },
     { responsive: true }
   );
@@ -429,6 +433,85 @@ function avg(rows, col) {
   return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : NaN;
 }
 
+function renderVersusView() {
+  const players = unique(state.profiles.map((d) => d.PLAYER_NAME));
+
+  const playerA = document.getElementById("playerASelect")?.value || players[0];
+  const playerB = document.getElementById("playerBSelect")?.value || players[1];
+
+  const seasonsA = unique(state.profiles.filter((d) => d.PLAYER_NAME === playerA).map((d) => d.SEASON));
+  const seasonsB = unique(state.profiles.filter((d) => d.PLAYER_NAME === playerB).map((d) => d.SEASON));
+
+  const seasonA = document.getElementById("seasonASelect")?.value || seasonsA[seasonsA.length - 1];
+  const seasonB = document.getElementById("seasonBSelect")?.value || seasonsB[seasonsB.length - 1];
+
+  setControls(`
+    <div class="control"><label>Player A</label><select id="playerASelect">${playerOptions(playerA)}</select></div>
+    <div class="control"><label>Season A</label><select id="seasonASelect">${seasonOptions(playerA, seasonA)}</select></div>
+    <div class="control"><label>Player B</label><select id="playerBSelect">${playerOptions(playerB)}</select></div>
+    <div class="control"><label>Season B</label><select id="seasonBSelect">${seasonOptions(playerB, seasonB)}</select></div>
+  `);
+
+  document.getElementById("playerASelect").onchange = renderVersusView;
+  document.getElementById("seasonASelect").onchange = renderVersusView;
+  document.getElementById("playerBSelect").onchange = renderVersusView;
+  document.getElementById("seasonBSelect").onchange = renderVersusView;
+
+  const a = state.profiles.find((d) => d.PLAYER_NAME === playerA && d.SEASON === seasonA);
+  const b = state.profiles.find((d) => d.PLAYER_NAME === playerB && d.SEASON === seasonB);
+
+  if (!a || !b) {
+    setContent("<div class='panel'>No comparison available.</div>");
+    return;
+  }
+
+  const metrics = [
+    "actual_points_per_shot",
+    "league_expected_pps",
+    "player_expected_pps",
+    "shot_making_per_100",
+    "player_adjusted_edge_per_100",
+    "avg_league_make_prob",
+    "avg_player_make_prob",
+    "TS_PCT",
+    "USG_PCT",
+    "NET_RATING",
+    "PIE",
+  ];
+
+  setSummary([
+    { label: `${playerA} Shot Making`, value: fmt(a.shot_making_per_100) },
+    { label: `${playerB} Shot Making`, value: fmt(b.shot_making_per_100) },
+    { label: `${playerA} Shot Quality`, value: fmt(a.league_expected_pps) },
+    { label: `${playerB} Shot Quality`, value: fmt(b.league_expected_pps) },
+  ]);
+
+  setContent(`
+    <div class="panel"><div id="versusBars"></div></div>
+    <div class="panel">
+      ${table(
+        metrics.map((metric) => ({
+          metric,
+          [playerA]: a[metric],
+          [playerB]: b[metric],
+          difference: Number(a[metric]) - Number(b[metric]),
+        })),
+        ["metric", playerA, playerB, "difference"]
+      )}
+    </div>
+  `);
+
+  Plotly.newPlot(
+    "versusBars",
+    [
+      { x: metrics, y: metrics.map((m) => a[m]), type: "bar", name: `${playerA} ${seasonA}` },
+      { x: metrics, y: metrics.map((m) => b[m]), type: "bar", name: `${playerB} ${seasonB}` },
+    ],
+    { title: "Player Comparison", barmode: "group", height: 520, margin: { l: 40, r: 20, t: 40, b: 130 } },
+    { responsive: true }
+  );
+}
+
 function renderModelsView() {
   setControls("");
   setSummary([]);
@@ -450,10 +533,10 @@ function renderModelsView() {
 function render() {
   if (state.view === "player") renderPlayerView();
   if (state.view === "compare") renderCompareView();
+  if (state.view === "versus") renderVersusView();
   if (state.view === "league") renderLeagueView();
   if (state.view === "models") renderModelsView();
 }
-
 init().catch((error) => {
   console.error(error);
   document.body.innerHTML = `<pre>${error.message}</pre>`;
