@@ -166,19 +166,46 @@ function renderVersusView() {
   const players = unique(state.profiles.map((d) => d.PLAYER_NAME));
   const playerA = document.getElementById("playerASelect")?.value || players[0];
   const playerB = document.getElementById("playerBSelect")?.value || players[1];
+
   const seasonsA = unique(state.profiles.filter((d) => d.PLAYER_NAME === playerA).map((d) => d.SEASON));
   const seasonsB = unique(state.profiles.filter((d) => d.PLAYER_NAME === playerB).map((d) => d.SEASON));
+
   const seasonA = document.getElementById("seasonASelect")?.value || seasonsA[seasonsA.length - 1];
   const seasonB = document.getElementById("seasonBSelect")?.value || seasonsB[seasonsB.length - 1];
 
-  setControls(`<div class="control"><label>Player A</label><select id="playerASelect">${playerOptions(playerA)}</select></div><div class="control"><label>Season A</label><select id="seasonASelect">${seasonOptions(playerA, seasonA)}</select></div><div class="control"><label>Player B</label><select id="playerBSelect">${playerOptions(playerB)}</select></div><div class="control"><label>Season B</label><select id="seasonBSelect">${seasonOptions(playerB, seasonB)}</select></div>`);
-  ["playerASelect", "seasonASelect", "playerBSelect", "seasonBSelect"].forEach((id) => document.getElementById(id).onchange = renderVersusView);
+  setControls(`
+    <div class="control"><label>Player A</label><select id="playerASelect">${playerOptions(playerA)}</select></div>
+    <div class="control"><label>Season A</label><select id="seasonASelect">${seasonOptions(playerA, seasonA)}</select></div>
+    <div class="control"><label>Player B</label><select id="playerBSelect">${playerOptions(playerB)}</select></div>
+    <div class="control"><label>Season B</label><select id="seasonBSelect">${seasonOptions(playerB, seasonB)}</select></div>
+  `);
+
+  ["playerASelect", "seasonASelect", "playerBSelect", "seasonBSelect"].forEach((id) => {
+    document.getElementById(id).onchange = renderVersusView;
+  });
 
   const a = state.profiles.find((d) => d.PLAYER_NAME === playerA && d.SEASON === seasonA);
   const b = state.profiles.find((d) => d.PLAYER_NAME === playerB && d.SEASON === seasonB);
   if (!a || !b) return;
 
-  const metrics = ["actual_points_per_shot", "league_expected_pps", "player_expected_pps", "shot_making_per_100", "player_adjusted_edge_per_100", "TS_PCT", "USG_PCT", "NET_RATING", "PIE"];
+  const metrics = [
+    "actual_points_per_shot",
+    "league_expected_pps",
+    "player_expected_pps",
+    "shot_making_per_100",
+    "player_adjusted_edge_per_100",
+    "TS_PCT",
+    "USG_PCT",
+    "NET_RATING",
+    "PIE",
+  ];
+
+  const comparisonRows = metrics.map((metric) => ({
+    metric,
+    [playerA]: a[metric],
+    [playerB]: b[metric],
+    difference: Number(a[metric]) - Number(b[metric]),
+  }));
 
   setSummary([
     { label: `${playerA} Shot Making`, value: fmt(a.shot_making_per_100) },
@@ -187,13 +214,77 @@ function renderVersusView() {
     { label: `${playerB} Shot Quality`, value: fmt(b.league_expected_pps) },
   ]);
 
-  setContent(`<div class="panel"><div id="versusBars"></div></div><div class="panel">${table(metrics.map((m) => ({ metric: m, [playerA]: a[m], [playerB]: b[m], difference: Number(a[m]) - Number(b[m]) })), ["metric", playerA, playerB, "difference"])}</div>`);
+  setContent(`
+    <div class="card-grid">
+      ${playerSummaryCard(playerA, seasonA, a)}
+      ${playerSummaryCard(playerB, seasonB, b)}
+    </div>
 
-  Plotly.newPlot("versusBars", [
-    { x: metrics, y: metrics.map((m) => a[m]), type: "bar", name: `${playerA} ${seasonA}` },
-    { x: metrics, y: metrics.map((m) => b[m]), type: "bar", name: `${playerB} ${seasonB}` },
-  ], { title: "Player Comparison", barmode: "group", height: 520, margin: { l: 40, r: 20, t: 40, b: 130 } }, { responsive: true });
+    <div class="two-col">
+      <div class="panel"><div id="versusBars"></div></div>
+      <div class="panel"><div id="versusDelta"></div></div>
+    </div>
+
+    <div class="panel">
+      <h3>Detailed Comparison</h3>
+      ${table(comparisonRows, ["metric", playerA, playerB, "difference"])}
+    </div>
+  `);
+
+  Plotly.newPlot(
+    "versusBars",
+    [
+      { x: metrics, y: metrics.map((m) => a[m]), type: "bar", name: `${playerA} ${seasonA}`, marker: { color: "#2563eb" } },
+      { x: metrics, y: metrics.map((m) => b[m]), type: "bar", name: `${playerB} ${seasonB}`, marker: { color: "#16a34a" } },
+    ],
+    {
+      title: "Scoring and Value Profile",
+      barmode: "group",
+      height: 520,
+      margin: { l: 40, r: 20, t: 45, b: 130 },
+    },
+    { responsive: true }
+  );
+
+  Plotly.newPlot(
+    "versusDelta",
+    [
+      {
+        x: comparisonRows.map((d) => d.metric),
+        y: comparisonRows.map((d) => d.difference),
+        type: "bar",
+        marker: {
+          color: comparisonRows.map((d) => d.difference >= 0 ? "#2563eb" : "#dc2626"),
+        },
+      },
+    ],
+    {
+      title: `${playerA} Advantage`,
+      height: 520,
+      margin: { l: 40, r: 20, t: 45, b: 130 },
+      yaxis: { zeroline: true, zerolinewidth: 2, zerolinecolor: "#0f172a" },
+    },
+    { responsive: true }
+  );
 }
+
+function playerSummaryCard(name, season, row) {
+  return `
+    <div class="player-card">
+      <h2>${name}</h2>
+      <div class="season">${season}</div>
+      <div class="stat-grid">
+        <div class="stat-pill"><span>Actual PPS</span><strong>${fmt(row.actual_points_per_shot)}</strong></div>
+        <div class="stat-pill"><span>Shot Quality</span><strong>${fmt(row.league_expected_pps)}</strong></div>
+        <div class="stat-pill"><span>Shot Making / 100</span><strong>${fmt(row.shot_making_per_100)}</strong></div>
+        <div class="stat-pill"><span>Player Edge / 100</span><strong>${fmt(row.player_adjusted_edge_per_100)}</strong></div>
+        <div class="stat-pill"><span>TS%</span><strong>${pct(row.TS_PCT)}</strong></div>
+        <div class="stat-pill"><span>Usage%</span><strong>${pct(row.USG_PCT)}</strong></div>
+      </div>
+    </div>
+  `;
+}
+
 
 function renderLeagueView() {
   const seasons = unique(state.profiles.map((d) => d.SEASON));
