@@ -1,7 +1,7 @@
 :root {
   font-family: Inter, Segoe UI, Arial, sans-serif;
   color: #172033;
-  background: #f4f6f8;
+  background: #eef2f6;
 }
 
 body {
@@ -11,26 +11,43 @@ body {
 header {
   display: flex;
   justify-content: space-between;
-  gap: 24px;
+  gap: 28px;
   align-items: end;
-  padding: 24px 32px;
-  background: #111827;
+  padding: 26px 34px;
+  background: #0f172a;
   color: white;
+  border-bottom: 4px solid #2563eb;
+}
+
+.eyebrow {
+  margin: 0 0 5px;
+  color: #93c5fd;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
 }
 
 h1 {
   margin: 0;
-  font-size: 32px;
+  font-size: 36px;
+}
+
+h2,
+h3 {
+  margin-top: 0;
 }
 
 p {
-  margin: 6px 0 0;
+  margin: 7px 0 0;
+  color: inherit;
 }
 
 nav {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 button,
@@ -40,12 +57,16 @@ input {
 }
 
 button {
-  border: 1px solid #344055;
-  background: #1f2937;
+  border: 1px solid #334155;
+  background: #1e293b;
   color: white;
   padding: 9px 12px;
   border-radius: 6px;
   cursor: pointer;
+}
+
+button:hover {
+  background: #334155;
 }
 
 button.active {
@@ -54,7 +75,7 @@ button.active {
 }
 
 main {
-  max-width: 1320px;
+  max-width: 1360px;
   margin: 0 auto;
   padding: 24px;
 }
@@ -67,7 +88,7 @@ main {
   margin-bottom: 18px;
   padding: 16px;
   background: white;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #dbe3ec;
   border-radius: 8px;
 }
 
@@ -78,13 +99,14 @@ main {
 
 label {
   font-size: 13px;
-  color: #4b5563;
+  color: #475569;
+  font-weight: 700;
 }
 
 select,
 input {
-  min-width: 180px;
-  padding: 8px 10px;
+  min-width: 190px;
+  padding: 9px 10px;
   border: 1px solid #cbd5e1;
   border-radius: 6px;
   background: white;
@@ -99,34 +121,58 @@ input {
 
 .metric {
   background: white;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #dbe3ec;
   border-radius: 8px;
-  padding: 14px;
+  padding: 15px;
 }
 
 .metric .label {
   font-size: 12px;
   color: #64748b;
+  font-weight: 700;
 }
 
 .metric .value {
-  margin-top: 6px;
-  font-size: 22px;
-  font-weight: 700;
+  margin-top: 7px;
+  font-size: 23px;
+  font-weight: 800;
+  color: #0f172a;
 }
 
 .panel {
   background: white;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #dbe3ec;
   border-radius: 8px;
   padding: 16px;
   margin-bottom: 18px;
+  overflow-x: auto;
 }
 
 .grid {
   display: grid;
   grid-template-columns: 2fr 1fr;
   gap: 18px;
+}
+
+.two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.note {
+  color: #64748b;
+  font-size: 14px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 700;
 }
 
 table {
@@ -140,10 +186,12 @@ td {
   padding: 8px;
   border-bottom: 1px solid #e5e7eb;
   text-align: left;
+  white-space: nowrap;
 }
 
 th {
   color: #475569;
+  background: #f8fafc;
 }
 
 @media (max-width: 900px) {
@@ -152,10 +200,12 @@ th {
     flex-direction: column;
   }
 
-  .metrics {
-    grid-template-columns: repeat(2, minmax(140px, 1fr));
+  nav {
+    justify-content: flex-start;
   }
 
+  .metrics,
+  .two-col,
   .grid {
     grid-template-columns: 1fr;
   }

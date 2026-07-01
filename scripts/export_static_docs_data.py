@@ -107,6 +107,17 @@ game_profiles = game_profiles.sort_values(
     ["PLAYER_ID", "SEASON", "GAME_DATE", "GAME_ID"]
 )
 
+projections = pd.read_parquet(ARTIFACTS / "player_projections_v1.parquet")
+projection_metrics = pd.read_csv(ARTIFACTS / "player_projection_metrics_v1.csv")
+breakout_metrics = pd.read_csv(ARTIFACTS / "breakout_metrics_v1.csv")
+
+projections["PLAYER_ID"] = projections["PLAYER_ID"].astype(str)
+projections["SEASON"] = projections["SEASON"].astype(str)
+
+projections.to_json(OUT / "player_projections.json", orient="records")
+projection_metrics.to_json(OUT / "player_projection_metrics.json", orient="records")
+breakout_metrics.to_json(OUT / "breakout_metrics.json", orient="records")
+
 rolling_rows = []
 
 for (player_id, season), group in game_profiles.groupby(["PLAYER_ID", "SEASON"]):
