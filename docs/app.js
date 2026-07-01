@@ -5,6 +5,7 @@ const state = {
   similar: [],
   metrics: [],
   shotIndex: [],
+  gameProfiles: [],
   currentShots: [],
 };
 
@@ -25,14 +26,21 @@ async function loadJson(path) {
 }
 
 async function init() {
-  [state.profiles, state.zones, state.similar, state.metrics, state.shotIndex] =
-    await Promise.all([
-      loadJson("data/player_profiles.json"),
-      loadJson("data/zone_profiles.json"),
-      loadJson("data/similar_players.json"),
-      loadJson("data/model_metrics.json"),
-      loadJson("data/shot_index.json"),
-    ]);
+  [
+  state.profiles,
+  state.zones,
+  state.similar,
+  state.metrics,
+  state.shotIndex,
+  state.gameProfiles,
+] = await Promise.all([
+  loadJson("data/player_profiles.json"),
+  loadJson("data/zone_profiles.json"),
+  loadJson("data/similar_players.json"),
+  loadJson("data/model_metrics.json"),
+  loadJson("data/shot_index.json"),
+  loadJson("data/player_game_profiles.json"),
+]);
 
   document.querySelectorAll("nav button").forEach((button) => {
     button.addEventListener("click", () => {
@@ -512,6 +520,129 @@ function renderVersusView() {
   );
 }
 
+function renderTrendsView() {
+  const players = unique(state.gameProfiles.map((d) => d.PLAYER_NAME));
+  const player = document.getElementById("trendPlayerSelect")?.value || players[0];
+
+  const seasons = unique(
+    state.gameProfiles.filter((d) => d.PLAYER_NAME === player).map((d) => d.SEASON)
+  );
+
+  const season = document.getElementById("trendSeasonSelect")?.value || seasons[seasons.length - 1];
+
+  setControls(`
+    <div class="control">
+      <label>Player</label>
+      <select id="trendPlayerSelect">${playerOptions(player)}</select>
+    </div>
+    <div class="control">
+      <label>Season</label>
+      <select id="trendSeasonSelect">${seasonOptions(player, season)}</select>
+    </div>
+  `);
+
+  document.getElementById("trendPlayerSelect").onchange = renderTrendsView;
+  document.getElementById("trendSeasonSelect").onchange = renderTrendsView;
+
+  const rows = state.gameProfiles
+    .filter((d) => d.PLAYER_NAME === player && d.SEASON === season)
+    .sort((a, b) => String(a.GAME_DATE).localeCompare(String(b.GAME_DATE)));
+
+  if (!rows.length) {
+    setSummary([]);
+    setContent("<div class='panel'>No game trends found.</div>");
+    return;
+  }
+
+  setSummary([
+    { label: "Games", value: rows.length },
+    { label: "Avg Actual PPS", value: fmt(avg(rows, "actual_points_per_shot")) },
+    { label: "Avg Expected PPS", value: fmt(avg(rows, "league_expected_pps")) },
+    { label: "Avg Shot Making / 100", value: fmt(avg(rows, "shot_making_per_100")) },
+  ]);
+
+  setContent(`
+    <div class="panel"><div id="trendPpsChart"></div></div>
+    <div class="panel"><div id="trendShotMakingChart"></div></div>
+    <div class="panel">
+      ${table(
+        rows,
+        [
+          "GAME_DATE",
+          "shots",
+          "actual_points_per_shot",
+          "league_expected_pps",
+          "player_expected_pps",
+          "shot_making_per_100",
+          "rolling_5_shot_making_per_100",
+        ]
+      )}
+    </div>
+  `);
+
+  Plotly.newPlot(
+    "trendPpsChart",
+    [
+      {
+        x: rows.map((d) => d.GAME_DATE),
+        y: rows.map((d) => d.actual_points_per_shot),
+        type: "scatter",
+        mode: "lines+markers",
+        name: "Actual PPS",
+      },
+      {
+        x: rows.map((d) => d.GAME_DATE),
+        y: rows.map((d) => d.league_expected_pps),
+        type: "scatter",
+        mode: "lines+markers",
+        name: "League Expected PPS",
+      },
+      {
+        x: rows.map((d) => d.GAME_DATE),
+        y: rows.map((d) => d.player_expected_pps),
+        type: "scatter",
+        mode: "lines+markers",
+        name: "Player Expected PPS",
+      },
+    ],
+    {
+      title: `${player} ${season} - Points Per Shot Trend`,
+      height: 430,
+      xaxis: { title: "Game Date" },
+      yaxis: { title: "Points Per Shot" },
+    },
+    { responsive: true }
+  );
+
+  Plotly.newPlot(
+    "trendShotMakingChart",
+    [
+      {
+        x: rows.map((d) => d.GAME_DATE),
+        y: rows.map((d) => d.shot_making_per_100),
+        type: "bar",
+        name: "Game Shot Making / 100",
+        marker: { color: "#94a3b8" },
+      },
+      {
+        x: rows.map((d) => d.GAME_DATE),
+        y: rows.map((d) => d.rolling_5_shot_making_per_100),
+        type: "scatter",
+        mode: "lines",
+        name: "Rolling 5-game Shot Making / 100",
+        line: { color: "#2563eb", width: 3 },
+      },
+    ],
+    {
+      title: `${player} ${season} - Shot Making Trend`,
+      height: 430,
+      xaxis: { title: "Game Date" },
+      yaxis: { title: "Shot Making / 100" },
+    },
+    { responsive: true }
+  );
+}
+
 function renderModelsView() {
   setControls("");
   setSummary([]);
@@ -534,6 +665,7 @@ function render() {
   if (state.view === "player") renderPlayerView();
   if (state.view === "compare") renderCompareView();
   if (state.view === "versus") renderVersusView();
+  if (state.view === "trends") renderTrendsView();
   if (state.view === "league") renderLeagueView();
   if (state.view === "models") renderModelsView();
 }
