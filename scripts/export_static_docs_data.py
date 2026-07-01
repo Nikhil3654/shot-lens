@@ -137,6 +137,25 @@ game_profiles = pd.concat(rolling_rows, ignore_index=True)
 
 game_profiles.to_json(OUT / "player_game_profiles.json", orient="records")
 
+optional_files = {
+    "calibration_metrics_v2.csv": "calibration_metrics.json",
+    "calibration_curve_v2.csv": "calibration_curve.json",
+    "player_projection_metrics_v1.csv": "player_projection_metrics.json",
+    "breakout_metrics_v1.csv": "breakout_metrics.json",
+}
+
+for source_name, output_name in optional_files.items():
+    source_path = ARTIFACTS / source_name
+    if source_path.exists():
+        pd.read_csv(source_path).to_json(OUT / output_name, orient="records")
+
+projection_path = ARTIFACTS / "player_projections_v1.parquet"
+if projection_path.exists():
+    projections = pd.read_parquet(projection_path)
+    projections["PLAYER_ID"] = projections["PLAYER_ID"].astype(str)
+    projections["SEASON"] = projections["SEASON"].astype(str)
+    projections.to_json(OUT / "player_projections.json", orient="records")
+
 print("Exported static data to docs/data")
 print("Profiles:", profiles.shape)
 print("Zones:", zones.shape)
