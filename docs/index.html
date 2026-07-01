@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Shot Lens</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Shot Lens</h1>
+        <p>NBA shot quality, shot making, and player-adjusted analytics</p>
+      </div>
+      <nav>
+        <button data-view="player" class="active">Player</button>
+        <button data-view="compare">Year Compare</button>
+        <button data-view="league">League Explorer</button>
+        <button data-view="models">Models</button>
+      </nav>
+    </header>
+
+    <main>
+      <section id="controls"></section>
+      <section id="summary" class="metrics"></section>
+      <section id="content"></section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

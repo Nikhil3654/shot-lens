@@ -1,0 +1,162 @@
+:root {
+  font-family: Inter, Segoe UI, Arial, sans-serif;
+  color: #172033;
+  background: #f4f6f8;
+}
+
+body {
+  margin: 0;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: end;
+  padding: 24px 32px;
+  background: #111827;
+  color: white;
+}
+
+h1 {
+  margin: 0;
+  font-size: 32px;
+}
+
+p {
+  margin: 6px 0 0;
+}
+
+nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+button,
+select,
+input {
+  font: inherit;
+}
+
+button {
+  border: 1px solid #344055;
+  background: #1f2937;
+  color: white;
+  padding: 9px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+button.active {
+  background: #2563eb;
+  border-color: #2563eb;
+}
+
+main {
+  max-width: 1320px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+#controls {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  align-items: end;
+  margin-bottom: 18px;
+  padding: 16px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.control {
+  display: grid;
+  gap: 6px;
+}
+
+label {
+  font-size: 13px;
+  color: #4b5563;
+}
+
+select,
+input {
+  min-width: 180px;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: white;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.metric {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.metric .label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.metric .value {
+  margin-top: 6px;
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.panel {
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 18px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 18px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+th,
+td {
+  padding: 8px;
+  border-bottom: 1px solid #e5e7eb;
+  text-align: left;
+}
+
+th {
+  color: #475569;
+}
+
+@media (max-width: 900px) {
+  header {
+    align-items: start;
+    flex-direction: column;
+  }
+
+  .metrics {
+    grid-template-columns: repeat(2, minmax(140px, 1fr));
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+}

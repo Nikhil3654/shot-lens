@@ -1,0 +1,1 @@
+[{"model":"league_shot_quality_v2","log_loss":0.6432096305,"roc_auc":0.6551410824,"brier":0.2265924503},{"model":"player_adjusted_v2","log_loss":0.6427205637,"roc_auc":0.6559506413,"brier":0.2264631216}]
