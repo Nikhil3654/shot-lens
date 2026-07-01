@@ -172,6 +172,63 @@ def make_comparison_chart(compare_df, metric):
     return fig
 
 
+def make_league_bar_chart(df, metric, top_n):
+    plot_df = df.sort_values(metric, ascending=False).head(top_n).copy()
+
+    fig = px.bar(
+        plot_df,
+        x=metric,
+        y="PLAYER_NAME",
+        orientation="h",
+        color=metric,
+        height=max(420, top_n * 24),
+        hover_data=[
+            "SEASON",
+            "shots",
+            "actual_points_per_shot",
+            "league_expected_pps",
+            "player_expected_pps",
+            "shot_making_per_100",
+            "player_adjusted_edge_per_100",
+        ],
+    )
+
+    fig.update_layout(
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=20, r=20, t=20, b=20),
+        coloraxis_showscale=False,
+    )
+
+    return fig
+
+
+def make_league_scatter(df, x_metric, y_metric, color_metric):
+    fig = px.scatter(
+        df,
+        x=x_metric,
+        y=y_metric,
+        color=color_metric,
+        size="shots",
+        hover_name="PLAYER_NAME",
+        hover_data=[
+            "SEASON",
+            "shots",
+            "actual_points_per_shot",
+            "league_expected_pps",
+            "player_expected_pps",
+            "shot_making_per_100",
+            "player_adjusted_edge_per_100",
+        ],
+        height=560,
+    )
+
+    fig.update_layout(
+        margin=dict(l=20, r=20, t=20, b=20),
+    )
+
+    return fig
+
+
 st.title("Shot Lens")
 st.caption("Two-model NBA shot quality, shot making, and player-adjusted analytics")
 
@@ -192,6 +249,7 @@ mode = st.sidebar.radio(
     [
         "Single Player Season",
         "Player Year Comparison",
+        "League Season Explorer",
         "Model Metrics",
     ],
 )
@@ -377,6 +435,138 @@ elif mode == "Player Year Comparison":
 
     st.dataframe(
         compare_df[table_cols],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+elif mode == "League Season Explorer":
+    st.subheader("League Season Explorer")
+
+    seasons = sorted(profiles["SEASON"].dropna().unique())
+    selected_season = st.sidebar.selectbox("Season", seasons, index=len(seasons) - 1)
+
+    min_shots = st.sidebar.slider(
+        "Minimum shots",
+        min_value=50,
+        max_value=1000,
+        value=300,
+        step=50,
+    )
+
+    top_n = st.sidebar.slider(
+        "Top players",
+        min_value=10,
+        max_value=100,
+        value=30,
+        step=5,
+    )
+
+    season_df = profiles[
+        (profiles["SEASON"] == selected_season) &
+        (profiles["shots"] >= min_shots)
+    ].copy()
+
+    metric_options = [
+        "actual_points_per_shot",
+        "league_expected_pps",
+        "player_expected_pps",
+        "shot_making_per_100",
+        "player_adjusted_edge_per_100",
+        "avg_league_make_prob",
+        "avg_player_make_prob",
+        "TS_PCT",
+        "USG_PCT",
+        "NET_RATING",
+        "PIE",
+    ]
+
+    metric_options = [m for m in metric_options if m in season_df.columns]
+
+    selected_metric = st.sidebar.selectbox(
+        "Ranking metric",
+        metric_options,
+        index=metric_options.index("shot_making_per_100")
+        if "shot_making_per_100" in metric_options
+        else 0,
+    )
+
+    st.write(
+        f"Showing players from **{selected_season}** with at least "
+        f"**{min_shots}** shots."
+    )
+
+    if season_df.empty:
+        st.warning("No players match those filters.")
+        st.stop()
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Players", f"{len(season_df):,}")
+    c2.metric("Avg Actual PPS", format_number(season_df["actual_points_per_shot"].mean()))
+    c3.metric("Avg League Expected PPS", format_number(season_df["league_expected_pps"].mean()))
+    c4.metric("Avg Shot Making / 100", format_number(season_df["shot_making_per_100"].mean()))
+
+    st.subheader("Player Rankings")
+    st.plotly_chart(
+        make_league_bar_chart(season_df, selected_metric, top_n),
+        use_container_width=True,
+    )
+
+    st.subheader("Shot Quality vs Shot Making")
+
+    scatter_x = st.sidebar.selectbox(
+        "Scatter X",
+        [m for m in metric_options if m in season_df.columns],
+        index=metric_options.index("league_expected_pps")
+        if "league_expected_pps" in metric_options
+        else 0,
+    )
+
+    scatter_y = st.sidebar.selectbox(
+        "Scatter Y",
+        [m for m in metric_options if m in season_df.columns],
+        index=metric_options.index("shot_making_per_100")
+        if "shot_making_per_100" in metric_options
+        else 0,
+    )
+
+    scatter_color = st.sidebar.selectbox(
+        "Scatter Color",
+        [m for m in metric_options if m in season_df.columns],
+        index=metric_options.index("player_adjusted_edge_per_100")
+        if "player_adjusted_edge_per_100" in metric_options
+        else 0,
+    )
+
+    st.plotly_chart(
+        make_league_scatter(season_df, scatter_x, scatter_y, scatter_color),
+        use_container_width=True,
+    )
+
+    st.subheader("Season Table")
+
+    table_cols = [
+        "PLAYER_NAME",
+        "SEASON",
+        "shots",
+        "actual_points_per_shot",
+        "league_expected_pps",
+        "player_expected_pps",
+        "shot_making_per_100",
+        "player_adjusted_edge_per_100",
+        "avg_league_make_prob",
+        "avg_player_make_prob",
+        "TS_PCT",
+        "USG_PCT",
+        "NET_RATING",
+        "PIE",
+        "best_zone",
+        "worst_zone",
+    ]
+
+    table_cols = [c for c in table_cols if c in season_df.columns]
+
+    st.dataframe(
+        season_df[table_cols].sort_values(selected_metric, ascending=False),
         use_container_width=True,
         hide_index=True,
     )
