@@ -48,6 +48,12 @@ const rankingPresets = {
     shot_making_per_100_stable: 0.15,
     player_adjusted_edge_per_100_stable: 0.1,
   },
+  "Scoring Value Score": {
+    scoring_value_score: 1.0,
+  },
+  "All Around Value Score": {
+    all_around_value_score: 1.0,
+  },
 };
 
 const fmt = (value, digits = 2) => {
@@ -95,6 +101,7 @@ async function init() {
 
   addStableMetrics();
   mergeProjectionFieldsIntoProfiles();
+  addValueScores();
 
   document.querySelectorAll("nav button").forEach((button) => {
     button.addEventListener("click", () => {
@@ -119,6 +126,47 @@ function addStableMetrics() {
       ...row,
       shot_making_per_100_stable: Number(row.shot_making_per_100 || 0) * weight,
       player_adjusted_edge_per_100_stable: Number(row.player_adjusted_edge_per_100 || 0) * weight,
+    };
+  });
+}
+
+function addValueScores() {
+  const features = [
+    "TS_PCT",
+    "USG_PCT",
+    "NET_RATING",
+    "PIE",
+    "actual_points_per_shot",
+    "league_expected_pps",
+    "shot_making_per_100_stable",
+    "player_adjusted_edge_per_100_stable",
+  ];
+
+  const vectors = zscoreRows(state.profiles, features);
+
+  state.profiles = state.profiles.map((row, i) => {
+    const values = Object.fromEntries(features.map((feature, j) => [feature, vectors[i][j]]));
+
+    const scoring_value_score =
+      values.actual_points_per_shot * 0.22 +
+      values.TS_PCT * 0.18 +
+      values.shot_making_per_100_stable * 0.22 +
+      values.player_adjusted_edge_per_100_stable * 0.18 +
+      values.USG_PCT * 0.10 +
+      values.league_expected_pps * 0.10;
+
+    const all_around_value_score =
+      values.PIE * 0.25 +
+      values.NET_RATING * 0.22 +
+      values.TS_PCT * 0.16 +
+      values.USG_PCT * 0.10 +
+      values.actual_points_per_shot * 0.12 +
+      values.shot_making_per_100_stable * 0.15;
+
+    return {
+      ...row,
+      scoring_value_score,
+      all_around_value_score,
     };
   });
 }
@@ -468,6 +516,8 @@ function renderLeagueView() {
     "NET_RATING",
     "PIE",
     "breakout_probability",
+    "scoring_value_score",
+    "all_around_value_score",
   ];
 
   setControls(`
@@ -510,6 +560,8 @@ function renderLeagueView() {
       "USG_PCT",
       "NET_RATING",
       "breakout_probability",
+      "scoring_value_score",
+      "all_around_value_score",
     ])}</div>
   `);
 
