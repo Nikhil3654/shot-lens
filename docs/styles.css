@@ -335,6 +335,45 @@ tr:hover td {
   background: #f8fafc;
 }
 
+.fade-in {
+  animation: riseIn 260ms ease both;
+}
+
+.visual-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.full-panel {
+  grid-column: 1 / -1;
+}
+
+.pulse-card {
+  transition: transform 180ms ease, box-shadow 180ms ease;
+}
+
+.pulse-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.1);
+}
+
+.chart-title {
+  margin: 0 0 10px;
+  color: #0f172a;
+  font-weight: 900;
+}
+
+@media (max-width: 900px) {
+  .visual-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .full-panel {
+    grid-column: auto;
+  }
+}
+
 @keyframes riseIn {
   from {
     opacity: 0;

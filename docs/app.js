@@ -355,42 +355,22 @@ function courtShapes() {
   ];
 }
 
-function renderVersusView() {
+async function renderVersusView() {
   const players = unique(state.profiles.map((d) => d.PLAYER_NAME));
-
   const playerA = document.getElementById("playerASelect")?.value || players[0];
   const playerB = document.getElementById("playerBSelect")?.value || players[1] || players[0];
 
-  const seasonA = validSeasonForPlayer(
-    playerA,
-    document.getElementById("seasonASelect")?.value
-  );
-
-  const seasonB = validSeasonForPlayer(
-    playerB,
-    document.getElementById("seasonBSelect")?.value
-  );
+  const seasonA = validSeasonForPlayer(playerA, document.getElementById("seasonASelect")?.value);
+  const seasonB = validSeasonForPlayer(playerB, document.getElementById("seasonBSelect")?.value);
 
   const labelA = `${playerA} ${seasonA}`;
   const labelB = `${playerB} ${seasonB}`;
 
   setControls(`
-    <div class="control">
-      <label>Player A</label>
-      <select id="playerASelect">${playerOptions(playerA)}</select>
-    </div>
-    <div class="control">
-      <label>Season A</label>
-      <select id="seasonASelect">${seasonOptionsFromSource(playerA, seasonA)}</select>
-    </div>
-    <div class="control">
-      <label>Player B</label>
-      <select id="playerBSelect">${playerOptions(playerB)}</select>
-    </div>
-    <div class="control">
-      <label>Season B</label>
-      <select id="seasonBSelect">${seasonOptionsFromSource(playerB, seasonB)}</select>
-    </div>
+    <div class="control"><label>Player A</label><select id="playerASelect">${playerOptions(playerA)}</select></div>
+    <div class="control"><label>Season A</label><select id="seasonASelect">${seasonOptionsFromSource(playerA, seasonA)}</select></div>
+    <div class="control"><label>Player B</label><select id="playerBSelect">${playerOptions(playerB)}</select></div>
+    <div class="control"><label>Season B</label><select id="seasonBSelect">${seasonOptionsFromSource(playerB, seasonB)}</select></div>
   `);
 
   ["playerASelect", "seasonASelect", "playerBSelect", "seasonBSelect"].forEach((id) => {
@@ -399,19 +379,12 @@ function renderVersusView() {
 
   const a = state.profiles.find((d) => d.PLAYER_NAME === playerA && d.SEASON === seasonA);
   const b = state.profiles.find((d) => d.PLAYER_NAME === playerB && d.SEASON === seasonB);
-
-  if (!a || !b) {
-    setSummary([]);
-    setContent("<div class='panel'>No comparison available for those selections.</div>");
-    return;
-  }
+  if (!a || !b) return;
 
   const metrics = [
     "actual_points_per_shot",
     "league_expected_pps",
     "player_expected_pps",
-    "shot_making_per_100",
-    "player_adjusted_edge_per_100",
     "shot_making_per_100_stable",
     "player_adjusted_edge_per_100_stable",
     "TS_PCT",
@@ -419,18 +392,6 @@ function renderVersusView() {
     "NET_RATING",
     "PIE",
   ];
-
-  const comparisonRows = metrics.map((metric) => {
-    const aValue = Number(a[metric]);
-    const bValue = Number(b[metric]);
-
-    return {
-      metric,
-      [labelA]: a[metric],
-      [labelB]: b[metric],
-      difference: Number.isFinite(aValue) && Number.isFinite(bValue) ? aValue - bValue : null,
-    };
-  });
 
   setSummary([
     { label: `${labelA} Stable Shot Making`, value: fmt(a.shot_making_per_100_stable) },
@@ -440,69 +401,224 @@ function renderVersusView() {
   ]);
 
   setContent(`
-    <div class="card-grid">
+    <div class="card-grid fade-in">
       ${playerSummaryCard(playerA, seasonA, a)}
       ${playerSummaryCard(playerB, seasonB, b)}
     </div>
 
-    <div class="two-col">
-      <div class="panel"><div id="versusBars"></div></div>
-      <div class="panel"><div id="versusDelta"></div></div>
+    <div class="visual-grid fade-in">
+      <div class="panel pulse-card"><h3 class="chart-title">Scoring Profile</h3><div id="versusBars"></div></div>
+      <div class="panel pulse-card"><h3 class="chart-title">Player Style Radar</h3><div id="styleRadar"></div></div>
+      <div class="panel pulse-card"><h3 class="chart-title">Season Progression</h3><div id="seasonProgression"></div></div>
+      <div class="panel pulse-card"><h3 class="chart-title">Box / Role Profile</h3><div id="boxRoleBars"></div></div>
+      <div class="panel full-panel pulse-card"><h3 class="chart-title">Shot Zone Comparison</h3><div id="zoneCompare"></div></div>
+      <div class="panel full-panel pulse-card"><h3 class="chart-title">Interactive Shot Map Overlay</h3><div id="overlayShotMap"></div></div>
     </div>
 
-    <div class="panel">
+    <div class="panel fade-in">
       <h3>Detailed Comparison</h3>
-      ${table(comparisonRows, ["metric", labelA, labelB, "difference"])}
+      ${table(metrics.map((m) => ({
+        metric: m,
+        [labelA]: a[m],
+        [labelB]: b[m],
+        difference: Number(a[m]) - Number(b[m]),
+      })), ["metric", labelA, labelB, "difference"])}
     </div>
   `);
 
-  Plotly.newPlot(
-    "versusBars",
-    [
-      {
-        x: metrics,
-        y: metrics.map((m) => a[m]),
-        type: "bar",
-        name: labelA,
-        marker: { color: "#2563eb" },
-      },
-      {
-        x: metrics,
-        y: metrics.map((m) => b[m]),
-        type: "bar",
-        name: labelB,
-        marker: { color: "#16a34a" },
-      },
-    ],
-    {
-      title: "Scoring and Value Profile",
-      barmode: "group",
-      height: 520,
-      margin: { l: 40, r: 20, t: 45, b: 130 },
-    },
-    { responsive: true }
-  );
+  drawVersusBars(a, b, labelA, labelB, metrics);
+  drawStyleRadar(a, b, labelA, labelB);
+  drawSeasonProgression(playerA, playerB);
+  drawBoxRoleBars(a, b, labelA, labelB);
+  drawZoneCompare(playerA, seasonA, playerB, seasonB, labelA, labelB);
+  await drawOverlayShotMap(playerA, seasonA, playerB, seasonB, labelA, labelB);
+}
 
-  Plotly.newPlot(
-    "versusDelta",
-    [
-      {
-        x: comparisonRows.map((d) => d.metric),
-        y: comparisonRows.map((d) => d.difference),
-        type: "bar",
-        marker: {
-          color: comparisonRows.map((d) => Number(d.difference) >= 0 ? "#2563eb" : "#dc2626"),
-        },
-      },
-    ],
+function drawVersusBars(a, b, labelA, labelB, metrics) {
+  Plotly.newPlot("versusBars", [
+    { x: metrics, y: metrics.map((m) => a[m]), type: "bar", name: labelA, marker: { color: "#2563eb" } },
+    { x: metrics, y: metrics.map((m) => b[m]), type: "bar", name: labelB, marker: { color: "#16a34a" } },
+  ], {
+    barmode: "group",
+    height: 440,
+    margin: { l: 45, r: 20, t: 10, b: 130 },
+  }, { responsive: true });
+}
+
+function drawStyleRadar(a, b, labelA, labelB) {
+  const labels = ["Rim", "Paint", "Midrange", "Corner 3", "Above Break 3", "3PT Rate"];
+  const keys = ["rim_rate", "paint_non_ra_rate", "midrange_rate", "corner_3_rate", "above_break_3_rate", "three_point_rate"];
+
+  Plotly.newPlot("styleRadar", [
     {
-      title: `${labelA} Advantage`,
-      height: 520,
-      margin: { l: 40, r: 20, t: 45, b: 130 },
-      yaxis: { zeroline: true, zerolinewidth: 2, zerolinecolor: "#0f172a" },
+      type: "scatterpolar",
+      r: keys.map((k) => Number(a[k]) || 0),
+      theta: labels,
+      fill: "toself",
+      name: labelA,
+      line: { color: "#2563eb" },
     },
-    { responsive: true }
-  );
+    {
+      type: "scatterpolar",
+      r: keys.map((k) => Number(b[k]) || 0),
+      theta: labels,
+      fill: "toself",
+      name: labelB,
+      line: { color: "#16a34a" },
+    },
+  ], {
+    height: 440,
+    margin: { l: 35, r: 35, t: 10, b: 30 },
+    polar: {
+      radialaxis: { visible: true, range: [0, Math.max(0.6, ...keys.map((k) => Number(a[k]) || 0), ...keys.map((k) => Number(b[k]) || 0))] },
+    },
+  }, { responsive: true });
+}
+
+function drawSeasonProgression(playerA, playerB) {
+  const rowsA = state.profiles.filter((d) => d.PLAYER_NAME === playerA).sort((a, b) => a.SEASON.localeCompare(b.SEASON));
+  const rowsB = state.profiles.filter((d) => d.PLAYER_NAME === playerB).sort((a, b) => a.SEASON.localeCompare(b.SEASON));
+
+  Plotly.newPlot("seasonProgression", [
+    {
+      x: rowsA.map((d) => d.SEASON),
+      y: rowsA.map((d) => d.shot_making_per_100_stable),
+      type: "scatter",
+      mode: "lines+markers",
+      name: `${playerA} Stable Shot Making`,
+      line: { color: "#2563eb", width: 3 },
+    },
+    {
+      x: rowsB.map((d) => d.SEASON),
+      y: rowsB.map((d) => d.shot_making_per_100_stable),
+      type: "scatter",
+      mode: "lines+markers",
+      name: `${playerB} Stable Shot Making`,
+      line: { color: "#16a34a", width: 3 },
+    },
+  ], {
+    height: 440,
+    margin: { l: 45, r: 20, t: 10, b: 45 },
+    yaxis: { title: "Stable Shot Making / 100" },
+  }, { responsive: true });
+}
+
+function drawBoxRoleBars(a, b, labelA, labelB) {
+  const roleMetrics = ["PTS", "AST", "REB", "USG_PCT"];
+  const displayLabels = ["Points", "Assists", "Rebounds", "Usage"];
+
+  Plotly.newPlot("boxRoleBars", [
+    {
+      x: displayLabels,
+      y: roleMetrics.map((m) => a[m]),
+      type: "bar",
+      name: labelA,
+      marker: { color: "#2563eb" },
+    },
+    {
+      x: displayLabels,
+      y: roleMetrics.map((m) => b[m]),
+      type: "bar",
+      name: labelB,
+      marker: { color: "#16a34a" },
+    },
+  ], {
+    barmode: "group",
+    height: 440,
+    margin: { l: 45, r: 20, t: 10, b: 45 },
+  }, { responsive: true });
+}
+
+function drawZoneCompare(playerA, seasonA, playerB, seasonB, labelA, labelB) {
+  const zonesA = state.zones.filter((d) => d.PLAYER_NAME === playerA && d.SEASON === seasonA);
+  const zonesB = state.zones.filter((d) => d.PLAYER_NAME === playerB && d.SEASON === seasonB);
+
+  const zoneNames = unique([...zonesA, ...zonesB].map((d) => d.SHOT_ZONE_BASIC));
+
+  const byZone = (rows, zone, metric) => {
+    const row = rows.find((d) => d.SHOT_ZONE_BASIC === zone);
+    return row ? Number(row[metric]) : null;
+  };
+
+  Plotly.newPlot("zoneCompare", [
+    {
+      x: zoneNames,
+      y: zoneNames.map((z) => byZone(zonesA, z, "actual_points_per_shot")),
+      type: "bar",
+      name: `${labelA} Actual PPS`,
+      marker: { color: "#2563eb" },
+    },
+    {
+      x: zoneNames,
+      y: zoneNames.map((z) => byZone(zonesA, z, "league_expected_pps")),
+      type: "bar",
+      name: `${labelA} Expected PPS`,
+      marker: { color: "#93c5fd" },
+    },
+    {
+      x: zoneNames,
+      y: zoneNames.map((z) => byZone(zonesB, z, "actual_points_per_shot")),
+      type: "bar",
+      name: `${labelB} Actual PPS`,
+      marker: { color: "#16a34a" },
+    },
+    {
+      x: zoneNames,
+      y: zoneNames.map((z) => byZone(zonesB, z, "league_expected_pps")),
+      type: "bar",
+      name: `${labelB} Expected PPS`,
+      marker: { color: "#86efac" },
+    },
+  ], {
+    barmode: "group",
+    height: 500,
+    margin: { l: 45, r: 20, t: 10, b: 120 },
+    yaxis: { title: "Points Per Shot" },
+  }, { responsive: true });
+}
+
+async function drawOverlayShotMap(playerA, seasonA, playerB, seasonB, labelA, labelB) {
+  const metaA = state.shotIndex.find((d) => d.PLAYER_NAME === playerA && d.SEASON === seasonA);
+  const metaB = state.shotIndex.find((d) => d.PLAYER_NAME === playerB && d.SEASON === seasonB);
+
+  const shotsA = metaA ? await loadJson(metaA.file) : [];
+  const shotsB = metaB ? await loadJson(metaB.file) : [];
+
+  const sample = (rows) => rows.length > 900 ? rows.filter((_, i) => i % Math.ceil(rows.length / 900) === 0) : rows;
+
+  const aRows = sample(shotsA);
+  const bRows = sample(shotsB);
+
+  Plotly.newPlot("overlayShotMap", [
+    {
+      x: aRows.map((d) => d.LOC_X),
+      y: aRows.map((d) => d.LOC_Y),
+      mode: "markers",
+      type: "scatter",
+      name: labelA,
+      marker: { color: "#2563eb", size: 6, opacity: 0.55 },
+      text: aRows.map((d) => `${labelA}<br>${d.ACTION_TYPE}<br>${d.SHOT_ZONE_BASIC}<br>EP: ${fmt(d.LEAGUE_EXPECTED_POINTS)}`),
+      hoverinfo: "text",
+    },
+    {
+      x: bRows.map((d) => d.LOC_X),
+      y: bRows.map((d) => d.LOC_Y),
+      mode: "markers",
+      type: "scatter",
+      name: labelB,
+      marker: { color: "#16a34a", size: 6, opacity: 0.55 },
+      text: bRows.map((d) => `${labelB}<br>${d.ACTION_TYPE}<br>${d.SHOT_ZONE_BASIC}<br>EP: ${fmt(d.LEAGUE_EXPECTED_POINTS)}`),
+      hoverinfo: "text",
+    },
+  ], {
+    height: 680,
+    plot_bgcolor: "#f8f4ea",
+    paper_bgcolor: "#ffffff",
+    shapes: courtShapes(),
+    xaxis: { title: "", range: [-250, 250], showgrid: false, zeroline: false },
+    yaxis: { title: "", range: [-60, 420], showgrid: false, zeroline: false, scaleanchor: "x", scaleratio: 1 },
+    margin: { l: 20, r: 20, t: 10, b: 20 },
+  }, { responsive: true });
 }
 
 function playerSummaryCard(name, season, row) {
@@ -947,7 +1063,7 @@ function renderModelsView() {
 function render() {
 
   document.body.dataset.view = state.view;
-  
+
   if (state.view === "versus") renderVersusView();
   if (state.view === "league") renderLeagueView();
   if (state.view === "trends") renderTrendsView();
