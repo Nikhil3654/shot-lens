@@ -293,6 +293,33 @@ function zscoreRows(rows, features) {
   }));
 }
 
+function rankingPresetCards(activePreset) {
+  const descriptions = {
+    "Scoring Value": "Balances efficiency, shot making, shot quality, and usage.",
+    "Shot Creation": "Rewards self-created scoring profile and difficult shot value.",
+    "Efficient Role Scorer": "Finds lower-friction scorers with efficient shot diets.",
+    "Breakout Watch": "Uses projections and current value signals to flag upside.",
+    "Overall Impact": "Blends scoring, impact stats, and all-around contribution.",
+    "Scoring Value Score": "Sorts directly by the composite scoring value score.",
+    "All Around Value Score": "Sorts directly by the all-around value score.",
+  };
+
+  return `
+    <div class="category-grid">
+      ${Object.keys(rankingPresets)
+        .map(
+          (preset) => `
+            <div class="category-card ${preset === activePreset ? "active" : ""}" data-preset-card="${preset}">
+              <h3>${preset}</h3>
+              <p>${descriptions[preset] || "Custom player evaluation preset."}</p>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
 function scoreRankingRows(rows, weights) {
   const features = Object.keys(weights).filter((feature) =>
     rows.some((row) => Number.isFinite(Number(row[feature])))
@@ -504,6 +531,8 @@ function renderLeagueView() {
 
   const metricOptions = [
     "ranking_score",
+    "scoring_value_score",
+    "all_around_value_score",
     "actual_points_per_shot",
     "league_expected_pps",
     "player_expected_pps",
@@ -516,8 +545,6 @@ function renderLeagueView() {
     "NET_RATING",
     "PIE",
     "breakout_probability",
-    "scoring_value_score",
-    "all_around_value_score",
   ];
 
   setControls(`
@@ -533,8 +560,8 @@ function renderLeagueView() {
 
   let rows = state.profiles.filter((d) => d.SEASON === season && Number(d.shots) >= minShots);
   rows = scoreRankingRows(rows, rankingPresets[preset]);
-
   rows = rows.sort((a, b) => Number(b[metric]) - Number(a[metric]));
+
   const top = rows.slice(0, 30);
 
   setSummary([
@@ -545,25 +572,38 @@ function renderLeagueView() {
   ]);
 
   setContent(`
+    ${rankingPresetCards(preset)}
+
     <div class="panel"><div id="leagueBar"></div></div>
     <div class="panel"><div id="leagueScatter"></div></div>
-    <div class="panel">${table(rows, [
-      "PLAYER_NAME",
-      "SEASON",
-      "shots",
-      "ranking_score",
-      "actual_points_per_shot",
-      "league_expected_pps",
-      "shot_making_per_100_stable",
-      "player_adjusted_edge_per_100_stable",
-      "TS_PCT",
-      "USG_PCT",
-      "NET_RATING",
-      "breakout_probability",
-      "scoring_value_score",
-      "all_around_value_score",
-    ])}</div>
+    <div class="panel">
+      <h3>${season} Player Rankings</h3>
+      ${table(rows, [
+        "PLAYER_NAME",
+        "SEASON",
+        "shots",
+        "ranking_score",
+        "scoring_value_score",
+        "all_around_value_score",
+        "actual_points_per_shot",
+        "league_expected_pps",
+        "shot_making_per_100_stable",
+        "player_adjusted_edge_per_100_stable",
+        "TS_PCT",
+        "USG_PCT",
+        "NET_RATING",
+        "breakout_probability",
+      ])}
+    </div>
   `);
+
+  document.querySelectorAll("[data-preset-card]").forEach((card) => {
+    card.addEventListener("click", () => {
+      document.getElementById("presetSelect").value = card.dataset.presetCard;
+      document.getElementById("metricSelect").value = "ranking_score";
+      renderLeagueView();
+    });
+  });
 
   Plotly.newPlot(
     "leagueBar",
@@ -574,12 +614,14 @@ function renderLeagueView() {
         type: "bar",
         orientation: "h",
         marker: { color: "#2563eb" },
+        hovertemplate: "%{y}<br>Value: %{x:.2f}<extra></extra>",
       },
     ],
     {
       title: `Top Players by ${metric}`,
       height: 760,
       yaxis: { autorange: "reversed" },
+      margin: { l: 140, r: 20, t: 45, b: 40 },
     },
     { responsive: true }
   );
@@ -594,10 +636,11 @@ function renderLeagueView() {
         mode: "markers",
         type: "scatter",
         marker: {
-          size: rows.map((d) => Math.max(6, Math.sqrt(Number(d.shots)) / 2)),
+          size: rows.map((d) => Math.max(7, Math.sqrt(Number(d.shots)) / 2)),
           color: rows.map((d) => d.ranking_score),
           colorscale: "Viridis",
           showscale: true,
+          line: { color: "white", width: 0.7 },
         },
         hovertemplate: "%{text}<br>Shot Quality: %{x:.2f}<br>Stable Shot Making: %{y:.2f}<extra></extra>",
       },
@@ -607,6 +650,7 @@ function renderLeagueView() {
       height: 540,
       xaxis: { title: "League Expected PPS" },
       yaxis: { title: "Stable Shot Making / 100" },
+      margin: { l: 60, r: 20, t: 45, b: 50 },
     },
     { responsive: true }
   );
@@ -901,6 +945,9 @@ function renderModelsView() {
 }
 
 function render() {
+
+  document.body.dataset.view = state.view;
+  
   if (state.view === "versus") renderVersusView();
   if (state.view === "league") renderLeagueView();
   if (state.view === "trends") renderTrendsView();

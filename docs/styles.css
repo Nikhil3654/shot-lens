@@ -6,6 +6,7 @@
   --blue: #2563eb;
   --green: #16a34a;
   --red: #dc2626;
+  --gold: #ca8a04;
   --muted: #64748b;
   --border: #dbe3ec;
   --card: #ffffff;
@@ -13,6 +14,35 @@
 
 body {
   margin: 0;
+  min-height: 100vh;
+  background:
+    repeating-linear-gradient(
+      135deg,
+      rgba(15, 23, 42, 0.025) 0,
+      rgba(15, 23, 42, 0.025) 1px,
+      transparent 1px,
+      transparent 18px
+    ),
+    linear-gradient(180deg, #eef4fb 0%, #f8fafc 48%, #edf2f7 100%);
+  transition: background 280ms ease;
+}
+
+body[data-view="versus"] {
+  background:
+    repeating-linear-gradient(135deg, rgba(37, 99, 235, 0.035) 0, rgba(37, 99, 235, 0.035) 1px, transparent 1px, transparent 18px),
+    linear-gradient(180deg, #eff6ff 0%, #f8fafc 55%, #edf2f7 100%);
+}
+
+body[data-view="league"] {
+  background:
+    repeating-linear-gradient(135deg, rgba(22, 163, 74, 0.035) 0, rgba(22, 163, 74, 0.035) 1px, transparent 1px, transparent 18px),
+    linear-gradient(180deg, #f0fdf4 0%, #f8fafc 55%, #edf2f7 100%);
+}
+
+body[data-view="projection"] {
+  background:
+    repeating-linear-gradient(135deg, rgba(202, 138, 4, 0.035) 0, rgba(202, 138, 4, 0.035) 1px, transparent 1px, transparent 18px),
+    linear-gradient(180deg, #fefce8 0%, #f8fafc 55%, #edf2f7 100%);
 }
 
 header {
@@ -21,9 +51,7 @@ header {
   gap: 28px;
   align-items: end;
   padding: 30px 36px;
-  background:
-    linear-gradient(135deg, rgba(37, 99, 235, 0.18), transparent 42%),
-    #0f172a;
+  background: #0f172a;
   color: white;
   border-bottom: 4px solid var(--blue);
 }
@@ -74,10 +102,12 @@ button {
   padding: 9px 12px;
   border-radius: 6px;
   cursor: pointer;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease;
 }
 
 button:hover {
   background: #334155;
+  transform: translateY(-1px);
 }
 
 button.active {
@@ -98,10 +128,11 @@ main {
   align-items: end;
   margin-bottom: 18px;
   padding: 16px;
-  background: white;
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 10px 30px rgba(15, 23, 42, 0.05);
+  backdrop-filter: blur(10px);
 }
 
 .control {
@@ -131,6 +162,13 @@ input {
   margin-bottom: 18px;
 }
 
+.metric,
+.panel,
+.player-card,
+.category-card {
+  animation: riseIn 240ms ease both;
+}
+
 .metric {
   background: white;
   border: 1px solid var(--border);
@@ -153,7 +191,7 @@ input {
 }
 
 .panel {
-  background: white;
+  background: rgba(255, 255, 255, 0.96);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 16px;
@@ -174,19 +212,51 @@ input {
   gap: 18px;
 }
 
-.card-grid {
+.card-grid,
+.category-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
   gap: 18px;
   margin-bottom: 18px;
 }
 
-.player-card {
+.category-grid {
+  grid-template-columns: repeat(5, minmax(170px, 1fr));
+}
+
+.player-card,
+.category-card {
   background: white;
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 18px;
   box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+}
+
+.category-card {
+  cursor: pointer;
+  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.category-card:hover {
+  transform: translateY(-2px);
+  border-color: #93c5fd;
+  box-shadow: 0 16px 32px rgba(15, 23, 42, 0.08);
+}
+
+.category-card.active {
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+}
+
+.category-card h3 {
+  margin-bottom: 6px;
+  font-size: 16px;
+}
+
+.category-card p {
+  color: var(--muted);
+  font-size: 13px;
 }
 
 .player-card h2 {
@@ -241,16 +311,6 @@ input {
   font-size: 14px;
 }
 
-.delta-pos {
-  color: var(--green);
-  font-weight: 800;
-}
-
-.delta-neg {
-  color: var(--red);
-  font-weight: 800;
-}
-
 table {
   width: 100%;
   border-collapse: collapse;
@@ -275,6 +335,23 @@ tr:hover td {
   background: #f8fafc;
 }
 
+@keyframes riseIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 1100px) {
+  .category-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+}
+
 @media (max-width: 900px) {
   header {
     align-items: start;
@@ -288,7 +365,8 @@ tr:hover td {
   .metrics,
   .two-col,
   .grid,
-  .card-grid {
+  .card-grid,
+  .category-grid {
     grid-template-columns: 1fr;
   }
 
