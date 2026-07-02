@@ -132,7 +132,26 @@ function mergeProjectionFieldsIntoProfiles() {
 
   state.profiles = state.profiles.map((row) => {
     const projection = byPlayer.get(String(row.PLAYER_ID));
-    return projection ? { ...row, ...projection } : row;
+
+    if (!projection) return row;
+
+    const projectedFields = {};
+
+    Object.keys(projection).forEach((key) => {
+      if (
+        key.startsWith("projected_next_") ||
+        key === "breakout_probability"
+      ) {
+        projectedFields[key] = projection[key];
+      }
+    });
+
+    projectedFields.projection_base_season = projection.SEASON;
+
+    return {
+      ...row,
+      ...projectedFields,
+    };
   });
 }
 
@@ -263,17 +282,40 @@ function courtShapes() {
 
 function renderVersusView() {
   const players = unique(state.profiles.map((d) => d.PLAYER_NAME));
-  const playerA = document.getElementById("playerASelect")?.value || players[0];
-  const playerB = document.getElementById("playerBSelect")?.value || players[1];
 
-  const seasonA = validSeasonForPlayer(playerA, document.getElementById("seasonASelect")?.value);
-  const seasonB = validSeasonForPlayer(playerB, document.getElementById("seasonBSelect")?.value);
+  const playerA = document.getElementById("playerASelect")?.value || players[0];
+  const playerB = document.getElementById("playerBSelect")?.value || players[1] || players[0];
+
+  const seasonA = validSeasonForPlayer(
+    playerA,
+    document.getElementById("seasonASelect")?.value
+  );
+
+  const seasonB = validSeasonForPlayer(
+    playerB,
+    document.getElementById("seasonBSelect")?.value
+  );
+
+  const labelA = `${playerA} ${seasonA}`;
+  const labelB = `${playerB} ${seasonB}`;
 
   setControls(`
-    <div class="control"><label>Player A</label><select id="playerASelect">${playerOptions(playerA)}</select></div>
-    <div class="control"><label>Season A</label><select id="seasonASelect">${seasonOptionsFromSource(playerA, seasonA)}</select></div>
-    <div class="control"><label>Player B</label><select id="playerBSelect">${playerOptions(playerB)}</select></div>
-    <div class="control"><label>Season B</label><select id="seasonBSelect">${seasonOptionsFromSource(playerB, seasonB)}</select></div>
+    <div class="control">
+      <label>Player A</label>
+      <select id="playerASelect">${playerOptions(playerA)}</select>
+    </div>
+    <div class="control">
+      <label>Season A</label>
+      <select id="seasonASelect">${seasonOptionsFromSource(playerA, seasonA)}</select>
+    </div>
+    <div class="control">
+      <label>Player B</label>
+      <select id="playerBSelect">${playerOptions(playerB)}</select>
+    </div>
+    <div class="control">
+      <label>Season B</label>
+      <select id="seasonBSelect">${seasonOptionsFromSource(playerB, seasonB)}</select>
+    </div>
   `);
 
   ["playerASelect", "seasonASelect", "playerBSelect", "seasonBSelect"].forEach((id) => {
@@ -282,7 +324,12 @@ function renderVersusView() {
 
   const a = state.profiles.find((d) => d.PLAYER_NAME === playerA && d.SEASON === seasonA);
   const b = state.profiles.find((d) => d.PLAYER_NAME === playerB && d.SEASON === seasonB);
-  if (!a || !b) return;
+
+  if (!a || !b) {
+    setSummary([]);
+    setContent("<div class='panel'>No comparison available for those selections.</div>");
+    return;
+  }
 
   const metrics = [
     "actual_points_per_shot",
@@ -298,18 +345,23 @@ function renderVersusView() {
     "PIE",
   ];
 
-  const comparisonRows = metrics.map((metric) => ({
-    metric,
-    [playerA]: a[metric],
-    [playerB]: b[metric],
-    difference: Number(a[metric]) - Number(b[metric]),
-  }));
+  const comparisonRows = metrics.map((metric) => {
+    const aValue = Number(a[metric]);
+    const bValue = Number(b[metric]);
+
+    return {
+      metric,
+      [labelA]: a[metric],
+      [labelB]: b[metric],
+      difference: Number.isFinite(aValue) && Number.isFinite(bValue) ? aValue - bValue : null,
+    };
+  });
 
   setSummary([
-    { label: `${playerA} Stable Shot Making`, value: fmt(a.shot_making_per_100_stable) },
-    { label: `${playerB} Stable Shot Making`, value: fmt(b.shot_making_per_100_stable) },
-    { label: `${playerA} Shot Quality`, value: fmt(a.league_expected_pps) },
-    { label: `${playerB} Shot Quality`, value: fmt(b.league_expected_pps) },
+    { label: `${labelA} Stable Shot Making`, value: fmt(a.shot_making_per_100_stable) },
+    { label: `${labelB} Stable Shot Making`, value: fmt(b.shot_making_per_100_stable) },
+    { label: `${labelA} Shot Quality`, value: fmt(a.league_expected_pps) },
+    { label: `${labelB} Shot Quality`, value: fmt(b.league_expected_pps) },
   ]);
 
   setContent(`
@@ -325,15 +377,27 @@ function renderVersusView() {
 
     <div class="panel">
       <h3>Detailed Comparison</h3>
-      ${table(comparisonRows, ["metric", playerA, playerB, "difference"])}
+      ${table(comparisonRows, ["metric", labelA, labelB, "difference"])}
     </div>
   `);
 
   Plotly.newPlot(
     "versusBars",
     [
-      { x: metrics, y: metrics.map((m) => a[m]), type: "bar", name: `${playerA} ${seasonA}`, marker: { color: "#2563eb" } },
-      { x: metrics, y: metrics.map((m) => b[m]), type: "bar", name: `${playerB} ${seasonB}`, marker: { color: "#16a34a" } },
+      {
+        x: metrics,
+        y: metrics.map((m) => a[m]),
+        type: "bar",
+        name: labelA,
+        marker: { color: "#2563eb" },
+      },
+      {
+        x: metrics,
+        y: metrics.map((m) => b[m]),
+        type: "bar",
+        name: labelB,
+        marker: { color: "#16a34a" },
+      },
     ],
     {
       title: "Scoring and Value Profile",
@@ -352,12 +416,12 @@ function renderVersusView() {
         y: comparisonRows.map((d) => d.difference),
         type: "bar",
         marker: {
-          color: comparisonRows.map((d) => d.difference >= 0 ? "#2563eb" : "#dc2626"),
+          color: comparisonRows.map((d) => Number(d.difference) >= 0 ? "#2563eb" : "#dc2626"),
         },
       },
     ],
     {
-      title: `${playerA} Advantage`,
+      title: `${labelA} Advantage`,
       height: 520,
       margin: { l: 40, r: 20, t: 45, b: 130 },
       yaxis: { zeroline: true, zerolinewidth: 2, zerolinecolor: "#0f172a" },
