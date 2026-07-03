@@ -65,6 +65,37 @@ const pct = (value) => {
   const number = Number(value);
   return Number.isFinite(number) ? `${(number * 100).toFixed(1)}%` : "N/A";
 };
+const lazyData = {
+  shotIndex: null,
+  gameProfiles: null,
+  calibrationMetrics: null,
+  calibrationCurve: null,
+};
+
+async function loadLazyData(key, path) {
+  if (lazyData[key]) return lazyData[key];
+
+  lazyData[key] = loadJson(path).catch(() => []);
+  return lazyData[key];
+}
+
+async function ensureShotDataLoaded() {
+  state.shotIndex = await loadLazyData("shotIndex", "data/shot_index.json");
+}
+
+async function ensureGameProfilesLoaded() {
+  state.gameProfiles = await loadLazyData(
+    "gameProfiles",
+    "data/player_game_profiles.json"
+  );
+}
+
+async function ensureCalibrationLoaded() {
+  [state.calibrationMetrics, state.calibrationCurve] = await Promise.all([
+    loadLazyData("calibrationMetrics", "data/calibration_metrics.json"),
+    loadLazyData("calibrationCurve", "data/calibration_curve.json"),
+  ]);
+}
 
 async function loadJson(path, fallback = []) {
   const response = await fetch(path);
@@ -73,47 +104,47 @@ async function loadJson(path, fallback = []) {
 }
 
 async function init() {
-  [
-    state.profiles,
-    state.zones,
-    state.similar,
-    state.metrics,
-    state.shotIndex,
-    state.gameProfiles,
-    state.projections,
-    state.projectionMetrics,
-    state.breakoutMetrics,
-    state.calibrationMetrics,
-    state.calibrationCurve,
-  ] = await Promise.all([
-    loadJson("data/player_profiles.json"),
-    loadJson("data/zone_profiles.json"),
-    loadJson("data/similar_players.json"),
-    loadJson("data/model_metrics.json"),
-    loadJson("data/shot_index.json"),
-    loadJson("data/player_game_profiles.json"),
-    loadJson("data/player_projections.json"),
-    loadJson("data/player_projection_metrics.json"),
-    loadJson("data/breakout_metrics.json"),
-    loadJson("data/calibration_metrics.json"),
-    loadJson("data/calibration_curve.json"),
-  ]);
+  try {
+    [
+      state.profiles,
+      state.zones,
+      state.similar,
+      state.metrics,
+      state.projections,
+      state.projectionMetrics,
+      state.breakoutMetrics,
+    ] = await Promise.all([
+      loadJson("data/player_profiles.json"),
+      loadJson("data/zone_profiles.json"),
+      loadJson("data/similar_players.json"),
+      loadJson("data/model_metrics.json"),
+      loadJson("data/player_projections.json"),
+      loadJson("data/player_projection_metrics.json"),
+      loadJson("data/breakout_metrics.json"),
+    ]);
 
-  addStableMetrics();
-  mergeProjectionFieldsIntoProfiles();
-  addValueScores();
-  addSeasonPercentiles();
+    state.shotIndex = [];
+    state.gameProfiles = [];
+    state.calibrationMetrics = [];
+    state.calibrationCurve = [];
 
-  document.querySelectorAll("nav button").forEach((button) => {
-    button.addEventListener("click", () => {
-      document.querySelectorAll("nav button").forEach((b) => b.classList.remove("active"));
-      button.classList.add("active");
-      state.view = button.dataset.view;
-      render();
-    });
-  });
+    addStableMetrics();
+    mergeProjectionFieldsIntoProfiles();
+    addValueScores();
 
-  render();
+    if (typeof addSeasonPercentiles === "function") {
+      addSeasonPercentiles();
+    }
+
+    render();
+  } catch (error) {
+    document.getElementById("app").innerHTML = `
+      <div class="panel">
+        <h2>Data failed to load</h2>
+        <p>${error.message}</p>
+      </div>
+    `;
+  }
 }
 
 function addStableMetrics() {
@@ -1139,18 +1170,108 @@ function renderModelsView() {
   setContent(tables.join(""));
 }
 
-function render() {
-
+async function render() {
   document.body.dataset.view = state.view;
 
-  if (state.view === "versus") renderVersusView();
-  if (state.view === "league") renderLeagueView();
-  if (state.view === "trends") renderTrendsView();
-  if (state.view === "projection") renderProjectionView();
-  if (state.view === "similarity") renderSimilarityView();
-  if (state.view === "calibration") renderCalibrationView();
-  if (state.view === "player") renderPlayerView();
-  if (state.view === "models") renderModelsView();
+  const navItems = [
+    ["versus", "Player Compare"],
+    ["league", "League Rankings"],
+    ["trends", "Player Trends"],
+    ["projection", "Projection"],
+    ["similarity", "Similarity Lab"],
+    ["calibration", "Calibration"],
+    ["player", "Shot Detail"],
+    ["models", "Models"],
+  ];
+
+  document.getElementById("nav").innerHTML = navItems
+    .map(
+      ([view, label]) => `
+        <button
+          class="${state.view === view ? "active" : ""}"
+          data-view="${view}"
+          type="button"
+        >
+          ${label}
+        </button>
+      `
+    )
+    .join("");
+
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.view = button.dataset.view;
+      render();
+    });
+  });
+
+  const app = document.getElementById("app");
+
+  if (state.view === "trends") {
+    app.innerHTML = `
+      <div class="loading-card">
+        <span class="loader"></span>
+        Loading player trend data...
+      </div>
+    `;
+
+    await ensureGameProfilesLoaded();
+    renderTrendsView();
+    return;
+  }
+
+  if (state.view === "calibration") {
+    app.innerHTML = `
+      <div class="loading-card">
+        <span class="loader"></span>
+        Loading calibration data...
+      </div>
+    `;
+
+    await ensureCalibrationLoaded();
+    renderCalibrationView();
+    return;
+  }
+
+  if (state.view === "player") {
+    app.innerHTML = `
+      <div class="loading-card">
+        <span class="loader"></span>
+        Loading shot detail data...
+      </div>
+    `;
+
+    await ensureShotDataLoaded();
+    renderPlayerView();
+    return;
+  }
+
+  if (state.view === "versus") {
+    renderVersusView();
+    return;
+  }
+
+  if (state.view === "league") {
+    renderLeagueView();
+    return;
+  }
+
+  if (state.view === "projection") {
+    renderProjectionView();
+    return;
+  }
+
+  if (state.view === "similarity") {
+    renderSimilarityView();
+    return;
+  }
+
+  if (state.view === "models") {
+    renderModelsView();
+    return;
+  }
+
+  renderVersusView();
 }
 
 init().catch((error) => {
