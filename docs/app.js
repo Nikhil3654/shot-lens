@@ -102,6 +102,7 @@ async function init() {
   addStableMetrics();
   mergeProjectionFieldsIntoProfiles();
   addValueScores();
+  addSeasonPercentiles();
 
   document.querySelectorAll("nav button").forEach((button) => {
     button.addEventListener("click", () => {
@@ -413,6 +414,8 @@ async function renderVersusView() {
       <div class="panel pulse-card"><h3 class="chart-title">Box / Role Profile</h3><div id="boxRoleBars"></div></div>
       <div class="panel full-panel pulse-card"><h3 class="chart-title">Shot Zone Comparison</h3><div id="zoneCompare"></div></div>
       <div class="panel full-panel pulse-card"><h3 class="chart-title">Interactive Shot Map Overlay</h3><div id="overlayShotMap"></div></div>
+      <div class="stat-pill"><span>Scoring Value %ile</span><strong>${pct(row.scoring_value_score_percentile)}</strong></div>
+      <div class="stat-pill"><span>Shot Making %ile</span><strong>${pct(row.shot_making_per_100_stable_percentile)}</strong></div>
     </div>
 
     <div class="panel fade-in">
@@ -644,6 +647,10 @@ function renderLeagueView() {
   const preset = document.getElementById("presetSelect")?.value || "Scoring Value";
   const metric = document.getElementById("metricSelect")?.value || "ranking_score";
   const minShots = Number(document.getElementById("minShots")?.value || 300);
+  const minUsage = Number(document.getElementById("minUsage")?.value || 0);
+  const minTs = Number(document.getElementById("minTs")?.value || 0);
+  const maxAge = Number(document.getElementById("maxAge")?.value || 99);
+  const minBreakout = Number(document.getElementById("minBreakout")?.value || 0);
 
   const metricOptions = [
     "ranking_score",
@@ -668,13 +675,31 @@ function renderLeagueView() {
     <div class="control"><label>Ranking Preset</label><select id="presetSelect">${Object.keys(rankingPresets).map((p) => `<option value="${p}" ${p === preset ? "selected" : ""}>${p}</option>`).join("")}</select></div>
     <div class="control"><label>Sort Metric</label><select id="metricSelect">${metricOptions.map((m) => `<option value="${m}" ${m === metric ? "selected" : ""}>${m}</option>`).join("")}</select></div>
     <div class="control"><label>Minimum shots</label><input id="minShots" type="number" value="${minShots}" min="0" step="50" /></div>
+    <div class="control"><label>Min Usage %</label><input id="minUsage" type="number" value="${minUsage}" min="0" max="1" step="0.01" /></div>
+    <div class="control"><label>Min TS%</label><input id="minTs" type="number" value="${minTs}" min="0" max="1" step="0.01" /></div>
+    <div class="control"><label>Max Age</label><input id="maxAge" type="number" value="${maxAge}" min="18" max="45" step="1" /></div>
+    <div class="control"><label>Min Breakout Prob</label><input id="minBreakout" type="number" value="${minBreakout}" min="0" max="1" step="0.05" /></div>
   `);
 
-  ["seasonSelect", "presetSelect", "metricSelect", "minShots"].forEach((id) => {
+  ["seasonSelect", "presetSelect", "metricSelect", "minShots", "minUsage", "minTs", "maxAge", "minBreakout"].forEach((id) => {
     document.getElementById(id).onchange = renderLeagueView;
   });
 
-  let rows = state.profiles.filter((d) => d.SEASON === season && Number(d.shots) >= minShots);
+  let rows = state.profiles.filter((d) => {
+    const usage = Number(d.USG_PCT) || 0;
+    const ts = Number(d.TS_PCT) || 0;
+    const age = Number(d.AGE) || 99;
+    const breakout = Number(d.breakout_probability) || 0;
+
+    return (
+      d.SEASON === season &&
+      Number(d.shots) >= minShots &&
+      usage >= minUsage &&
+      ts >= minTs &&
+      age <= maxAge &&
+      breakout >= minBreakout
+    );
+  });
   rows = scoreRankingRows(rows, rankingPresets[preset]);
   rows = rows.sort((a, b) => Number(b[metric]) - Number(a[metric]));
 
@@ -709,6 +734,11 @@ function renderLeagueView() {
         "USG_PCT",
         "NET_RATING",
         "breakout_probability",
+        "scoring_value_score_percentile",
+        "all_around_value_score_percentile",
+        "shot_making_per_100_stable_percentile",
+        "TS_PCT_percentile",
+        "USG_PCT_percentile",
       ])}
     </div>
   `);
@@ -1050,6 +1080,55 @@ function renderCalibrationView() {
     xaxis: { title: "Predicted probability" },
     yaxis: { title: "Actual make rate" },
   }, { responsive: true });
+}
+
+function percentileRank(values, value) {
+  const clean = values.map(Number).filter(Number.isFinite).sort((a, b) => a - b);
+  const number = Number(value);
+
+  if (!Number.isFinite(number) || !clean.length) return null;
+
+  const below = clean.filter((v) => v <= number).length;
+  return below / clean.length;
+}
+
+function addSeasonPercentiles() {
+  const percentileMetrics = [
+    "actual_points_per_shot",
+    "league_expected_pps",
+    "player_expected_pps",
+    "shot_making_per_100_stable",
+    "player_adjusted_edge_per_100_stable",
+    "TS_PCT",
+    "USG_PCT",
+    "NET_RATING",
+    "PIE",
+    "scoring_value_score",
+    "all_around_value_score",
+  ];
+
+  const bySeason = new Map();
+
+  state.profiles.forEach((row) => {
+    if (!bySeason.has(row.SEASON)) bySeason.set(row.SEASON, []);
+    bySeason.get(row.SEASON).push(row);
+  });
+
+  state.profiles = state.profiles.map((row) => {
+    const seasonRows = bySeason.get(row.SEASON) || [];
+    const out = { ...row };
+
+    percentileMetrics.forEach((metric) => {
+      const values = seasonRows.map((r) => r[metric]);
+      const percentile = percentileRank(values, row[metric]);
+
+      if (percentile !== null) {
+        out[`${metric}_percentile`] = percentile;
+      }
+    });
+
+    return out;
+  });
 }
 
 function renderModelsView() {
