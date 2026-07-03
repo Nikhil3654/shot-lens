@@ -1,37 +1,68 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Shot Lens</title>
-    <link rel="stylesheet" href="styles.css" />
-    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
-  </head>
-  <body>
-    <header>
-      <div>
-        <p class="eyebrow">NBA Player Evaluation Lab</p>
-        <h1>Shot Lens</h1>
-        <p>Compare scoring value, shot quality, player trends, similarity, and next-season projections.</p>
-      </div>
-      <nav>
-        <button data-view="versus" class="active">Player Compare</button>
-        <button data-view="league">League Rankings</button>
-        <button data-view="trends">Player Trends</button>
-        <button data-view="projection">Projection</button>
-        <button data-view="similarity">Similarity Lab</button>
-        <button data-view="calibration">Calibration</button>
-        <button data-view="player">Shot Detail</button>
-        <button data-view="models">Models</button>
-      </nav>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shot Lens | NBA Player Evaluation Lab</title>
+
+  <link rel="preconnect" href="https://cdn.plot.ly" />
+  <link rel="stylesheet" href="styles.css" />
+
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <div class="ambient ambient-three"></div>
+
+  <main class="site-shell">
+    <header class="topbar">
+      <a class="brand" href="#">
+        <span class="brand-mark">SL</span>
+        <span>
+          <strong>Shot Lens</strong>
+          <small>NBA Player Evaluation Lab</small>
+        </span>
+      </a>
+
+      <nav id="nav" class="nav"></nav>
     </header>
 
-    <main>
-      <section id="controls"></section>
-      <section id="summary" class="metrics"></section>
-      <section id="content"></section>
-    </main>
+    <section class="hero-strip">
+      <div>
+        <p class="eyebrow">Player value, shot quality, projection, comparison</p>
+        <h1>Modern NBA analytics from model output, advanced stats, and player profiles.</h1>
+      </div>
 
-    <script src="app.js"></script>
-  </body>
+      <div class="hero-metrics">
+        <div>
+          <span>Shot Model</span>
+          <strong>Two-stage</strong>
+        </div>
+        <div>
+          <span>Evaluation</span>
+          <strong>Percentile</strong>
+        </div>
+        <div>
+          <span>Deploy</span>
+          <strong>GitHub Pages</strong>
+        </div>
+      </div>
+    </section>
+
+    <section id="app" class="app-surface">
+      <div class="loading-card">
+        <span class="loader"></span>
+        Loading NBA data...
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>Shot Lens</span>
+    <span>Built for player comparison, model-backed value signals, and visual NBA scouting.</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
 </html>
