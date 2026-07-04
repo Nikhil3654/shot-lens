@@ -1,17 +1,44 @@
 const state = {
   view: "versus",
   profiles: [],
-  zones: [],
   similar: [],
   metrics: [],
-  shotIndex: [],
-  gameProfiles: [],
   projections: [],
   projectionMetrics: [],
   breakoutMetrics: [],
   calibrationMetrics: [],
   calibrationCurve: [],
+  shotIndex: [],
+  ui: {
+    playerA: null,
+    seasonA: null,
+    playerB: null,
+    seasonB: null,
+    leagueSeason: null,
+    rankingPreset: "Scoring Value",
+    minShots: 150,
+    minUsage: 0,
+    minTs: 0,
+    maxAge: 45,
+    minBreakout: 0,
+    trendPlayer: null,
+    trendSeason: null,
+    projectionSeason: null,
+    similarityPlayer: null,
+    similaritySeason: null,
+    shotPlayer: null,
+    shotSeason: null,
+  },
 };
+
+const lazyData = {
+  shotIndex: null,
+  calibrationMetrics: null,
+  calibrationCurve: null,
+};
+
+const playerDataCache = new Map();
+const shotFileCache = new Map();
 
 const rankingPresets = {
   "Scoring Value": {
@@ -49,45 +76,40 @@ const rankingPresets = {
     player_adjusted_edge_per_100_stable: 0.1,
   },
   "Scoring Value Score": {
-    scoring_value_score: 1.0,
+    scoring_value_score: 1,
   },
   "All Around Value Score": {
-    all_around_value_score: 1.0,
+    all_around_value_score: 1,
   },
 };
 
-const fmt = (value, digits = 2) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? number.toFixed(digits) : "N/A";
-};
+async function loadJson(path) {
+  const response = await fetch(path, { cache: "force-cache" });
 
-const pct = (value) => {
-  const number = Number(value);
-  return Number.isFinite(number) ? `${(number * 100).toFixed(1)}%` : "N/A";
-};
-const lazyData = {
-  shotIndex: null,
-  gameProfiles: null,
-  calibrationMetrics: null,
-  calibrationCurve: null,
-};
+  if (!response.ok) {
+    throw new Error(`Could not load ${path}`);
+  }
+
+  return response.json();
+}
+
+async function loadOptionalJson(path, fallback = []) {
+  try {
+    return await loadJson(path);
+  } catch {
+    return fallback;
+  }
+}
 
 async function loadLazyData(key, path) {
   if (lazyData[key]) return lazyData[key];
 
-  lazyData[key] = loadJson(path).catch(() => []);
+  lazyData[key] = loadOptionalJson(path, []);
   return lazyData[key];
 }
 
-async function ensureShotDataLoaded() {
+async function ensureShotIndexLoaded() {
   state.shotIndex = await loadLazyData("shotIndex", "data/shot_index.json");
-}
-
-async function ensureGameProfilesLoaded() {
-  state.gameProfiles = await loadLazyData(
-    "gameProfiles",
-    "data/player_game_profiles.json"
-  );
 }
 
 async function ensureCalibrationLoaded() {
@@ -97,66 +119,219 @@ async function ensureCalibrationLoaded() {
   ]);
 }
 
-async function loadJson(path, fallback = []) {
-  const response = await fetch(path);
-  if (!response.ok) return fallback;
-  return response.json();
+function playerFolder(playerId) {
+  return `data/players/${playerId}`;
 }
 
-async function init() {
-  try {
-    [
-      state.profiles,
-      state.similar,
-      state.metrics,
-      state.projections,
-      state.projectionMetrics,
-      state.breakoutMetrics,
-    ] = await Promise.all([
-      loadJson("data/player_profiles_slim.json"),
-      loadJson("data/similar_players.json"),
-      loadJson("data/model_metrics.json"),
-      loadJson("data/player_projections.json"),
-      loadJson("data/player_projection_metrics.json"),
-      loadJson("data/breakout_metrics.json"),
-    ]);
+function safeSeason(season) {
+  return String(season).replace("/", "-");
+}
 
-    state.zones = [];
-    state.shotIndex = [];
-    state.gameProfiles = [];
-    state.calibrationMetrics = [];
-    state.calibrationCurve = [];
+async function loadPlayerSeasonFile(playerId, season, kind) {
+  const key = `${kind}:${playerId}:${season}`;
 
-    addStableMetrics();
-    mergeProjectionFieldsIntoProfiles();
-    addValueScores();
-
-    if (typeof addSeasonPercentiles === "function") {
-      addSeasonPercentiles();
-    }
-
-    render();
-  } catch (error) {
-    document.getElementById("app").innerHTML = `
-      <div class="panel">
-        <h2>Data failed to load</h2>
-        <p>${error.message}</p>
-      </div>
-    `;
+  if (playerDataCache.has(key)) {
+    return playerDataCache.get(key);
   }
+
+  const path = `${playerFolder(playerId)}/${kind}_${safeSeason(season)}.json`;
+  const promise = loadOptionalJson(path, []);
+
+  playerDataCache.set(key, promise);
+  return promise;
+}
+
+async function loadPlayerGames(playerId, season) {
+  return loadPlayerSeasonFile(playerId, season, "games");
+}
+
+async function loadPlayerZones(playerId, season) {
+  return loadPlayerSeasonFile(playerId, season, "zones");
+}
+
+async function loadShotFile(playerId, season) {
+  await ensureShotIndexLoaded();
+
+  const hit = state.shotIndex.find(
+    (row) =>
+      String(row.PLAYER_ID) === String(playerId) &&
+      String(row.SEASON) === String(season)
+  );
+
+  if (!hit || !hit.path) return [];
+
+  if (shotFileCache.has(hit.path)) return shotFileCache.get(hit.path);
+
+  const promise = loadOptionalJson(hit.path, []);
+  shotFileCache.set(hit.path, promise);
+
+  return promise;
+}
+
+function numberValue(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function fmt(value, digits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return number.toFixed(digits);
+}
+
+function pct(value, digits = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `${(number * 100).toFixed(digits)}%`;
+}
+
+function signed(value, digits = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "-";
+  return `${number >= 0 ? "+" : ""}${number.toFixed(digits)}`;
+}
+
+function unique(values) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function latestSeason() {
+  const seasons = unique(state.profiles.map((row) => row.SEASON)).sort();
+  return seasons[seasons.length - 1] || null;
+}
+
+function playerNames() {
+  return unique(state.profiles.map((row) => row.PLAYER_NAME)).sort();
+}
+
+function seasonsForPlayer(playerName, source = state.profiles) {
+  return unique(
+    source
+      .filter((row) => row.PLAYER_NAME === playerName)
+      .map((row) => row.SEASON)
+  ).sort();
+}
+
+function validSeasonForPlayer(playerName, selectedSeason, source = state.profiles) {
+  const seasons = seasonsForPlayer(playerName, source);
+  if (seasons.includes(selectedSeason)) return selectedSeason;
+  return seasons[seasons.length - 1] || null;
+}
+
+function playerOptions(selected) {
+  return playerNames()
+    .map(
+      (name) =>
+        `<option value="${escapeHtml(name)}" ${
+          name === selected ? "selected" : ""
+        }>${escapeHtml(name)}</option>`
+    )
+    .join("");
+}
+
+function seasonOptionsForPlayer(playerName, selected) {
+  return seasonsForPlayer(playerName)
+    .map(
+      (season) =>
+        `<option value="${season}" ${
+          season === selected ? "selected" : ""
+        }>${season}</option>`
+    )
+    .join("");
+}
+
+function seasonOptions(selected) {
+  return unique(state.profiles.map((row) => row.SEASON))
+    .sort()
+    .map(
+      (season) =>
+        `<option value="${season}" ${
+          season === selected ? "selected" : ""
+        }>${season}</option>`
+    )
+    .join("");
+}
+
+function profileRow(playerName, season) {
+  return state.profiles.find(
+    (row) => row.PLAYER_NAME === playerName && row.SEASON === season
+  );
+}
+
+function profileByIdSeason(playerId, season) {
+  return state.profiles.find(
+    (row) => String(row.PLAYER_ID) === String(playerId) && row.SEASON === season
+  );
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function zscoreRows(rows, features) {
+  const stats = features.map((feature) => {
+    const values = rows.map((row) => numberValue(row[feature]));
+    const mean = values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
+    const variance =
+      values.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
+      Math.max(values.length, 1);
+    const std = Math.sqrt(variance) || 1;
+    return { mean, std };
+  });
+
+  return rows.map((row) =>
+    features.map((feature, index) => {
+      const value = numberValue(row[feature]);
+      return (value - stats[index].mean) / stats[index].std;
+    })
+  );
 }
 
 function addStableMetrics() {
   const k = 300;
 
   state.profiles = state.profiles.map((row) => {
-    const shots = Number(row.shots) || 0;
+    const shots = numberValue(row.shots);
     const weight = shots / (shots + k);
 
     return {
       ...row,
-      shot_making_per_100_stable: Number(row.shot_making_per_100 || 0) * weight,
-      player_adjusted_edge_per_100_stable: Number(row.player_adjusted_edge_per_100 || 0) * weight,
+      shot_making_per_100_stable:
+        numberValue(row.shot_making_per_100) * weight,
+      player_adjusted_edge_per_100_stable:
+        numberValue(row.player_adjusted_edge_per_100) * weight,
+    };
+  });
+}
+
+function mergeProjectionFieldsIntoProfiles() {
+  if (!state.projections.length) return;
+
+  const byPlayer = new Map(
+    state.projections.map((row) => [String(row.PLAYER_ID), row])
+  );
+
+  state.profiles = state.profiles.map((row) => {
+    const projection = byPlayer.get(String(row.PLAYER_ID));
+    if (!projection) return row;
+
+    const projectedFields = {};
+
+    Object.keys(projection).forEach((key) => {
+      if (key.startsWith("projected_next_") || key === "breakout_probability") {
+        projectedFields[key] = projection[key];
+      }
+    });
+
+    projectedFields.projection_base_season = projection.SEASON;
+
+    return {
+      ...row,
+      ...projectedFields,
     };
   });
 }
@@ -175,22 +350,27 @@ function addValueScores() {
 
   const vectors = zscoreRows(state.profiles, features);
 
-  state.profiles = state.profiles.map((row, i) => {
-    const values = Object.fromEntries(features.map((feature, j) => [feature, vectors[i][j]]));
+  state.profiles = state.profiles.map((row, index) => {
+    const values = Object.fromEntries(
+      features.map((feature, featureIndex) => [
+        feature,
+        vectors[index][featureIndex],
+      ])
+    );
 
     const scoring_value_score =
       values.actual_points_per_shot * 0.22 +
       values.TS_PCT * 0.18 +
       values.shot_making_per_100_stable * 0.22 +
       values.player_adjusted_edge_per_100_stable * 0.18 +
-      values.USG_PCT * 0.10 +
-      values.league_expected_pps * 0.10;
+      values.USG_PCT * 0.1 +
+      values.league_expected_pps * 0.1;
 
     const all_around_value_score =
       values.PIE * 0.25 +
       values.NET_RATING * 0.22 +
       values.TS_PCT * 0.16 +
-      values.USG_PCT * 0.10 +
+      values.USG_PCT * 0.1 +
       values.actual_points_per_shot * 0.12 +
       values.shot_making_per_100_stable * 0.15;
 
@@ -200,916 +380,6 @@ function addValueScores() {
       all_around_value_score,
     };
   });
-}
-
-function mergeProjectionFieldsIntoProfiles() {
-  if (!state.projections.length) return;
-
-  const byPlayer = new Map(
-    state.projections.map((row) => [String(row.PLAYER_ID), row])
-  );
-
-  state.profiles = state.profiles.map((row) => {
-    const projection = byPlayer.get(String(row.PLAYER_ID));
-
-    if (!projection) return row;
-
-    const projectedFields = {};
-
-    Object.keys(projection).forEach((key) => {
-      if (
-        key.startsWith("projected_next_") ||
-        key === "breakout_probability"
-      ) {
-        projectedFields[key] = projection[key];
-      }
-    });
-
-    projectedFields.projection_base_season = projection.SEASON;
-
-    return {
-      ...row,
-      ...projectedFields,
-    };
-  });
-}
-
-function setControls(html) {
-  document.getElementById("controls").innerHTML = html;
-}
-
-function setSummary(items) {
-  document.getElementById("summary").innerHTML = items
-    .map((item) => `<div class="metric"><div class="label">${item.label}</div><div class="value">${item.value}</div></div>`)
-    .join("");
-}
-
-function setContent(html) {
-  document.getElementById("content").innerHTML = html;
-}
-
-function unique(values) {
-  return [...new Set(values.filter(Boolean))].sort();
-}
-
-function avg(rows, col) {
-  const nums = rows.map((d) => Number(d[col])).filter(Number.isFinite);
-  return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : NaN;
-}
-
-function seasonsForPlayer(player, source = state.profiles) {
-  return unique(source.filter((d) => d.PLAYER_NAME === player).map((d) => d.SEASON));
-}
-
-function validSeasonForPlayer(player, selectedSeason, source = state.profiles) {
-  const seasons = seasonsForPlayer(player, source);
-  if (seasons.includes(selectedSeason)) return selectedSeason;
-  return seasons[seasons.length - 1];
-}
-
-function seasonOptionsFromSource(player, selected, source = state.profiles) {
-  return seasonsForPlayer(player, source)
-    .map((season) => `<option value="${season}" ${season === selected ? "selected" : ""}>${season}</option>`)
-    .join("");
-}
-
-function playerOptions(selected) {
-  return unique(state.profiles.map((d) => d.PLAYER_NAME))
-    .map((name) => `<option value="${name}" ${name === selected ? "selected" : ""}>${name}</option>`)
-    .join("");
-}
-
-function allSeasonOptions(selected) {
-  return unique(state.profiles.map((d) => d.SEASON))
-    .map((season) => `<option value="${season}" ${season === selected ? "selected" : ""}>${season}</option>`)
-    .join("");
-}
-
-function table(rows, cols) {
-  return `<table><thead><tr>${cols.map((c) => `<th>${c}</th>`).join("")}</tr></thead><tbody>${rows
-    .map((row) => `<tr>${cols.map((c) => `<td>${typeof row[c] === "number" ? fmt(row[c]) : row[c] ?? ""}</td>`).join("")}</tr>`)
-    .join("")}</tbody></table>`;
-}
-
-function cosineSimilarity(a, b) {
-  let dot = 0;
-  let magA = 0;
-  let magB = 0;
-
-  for (let i = 0; i < a.length; i += 1) {
-    dot += a[i] * b[i];
-    magA += a[i] * a[i];
-    magB += b[i] * b[i];
-  }
-
-  if (!magA || !magB) return 0;
-  return dot / (Math.sqrt(magA) * Math.sqrt(magB));
-}
-
-function zscoreRows(rows, features) {
-  const means = {};
-  const stds = {};
-
-  features.forEach((feature) => {
-    const values = rows.map((row) => Number(row[feature])).filter(Number.isFinite);
-    const mean = values.reduce((a, b) => a + b, 0) / Math.max(values.length, 1);
-    const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / Math.max(values.length, 1);
-    means[feature] = mean;
-    stds[feature] = Math.sqrt(variance) || 1;
-  });
-
-  return rows.map((row) => features.map((feature) => {
-    const value = Number(row[feature]);
-    return Number.isFinite(value) ? (value - means[feature]) / stds[feature] : 0;
-  }));
-}
-
-function rankingPresetCards(activePreset) {
-  const descriptions = {
-    "Scoring Value": "Balances efficiency, shot making, shot quality, and usage.",
-    "Shot Creation": "Rewards self-created scoring profile and difficult shot value.",
-    "Efficient Role Scorer": "Finds lower-friction scorers with efficient shot diets.",
-    "Breakout Watch": "Uses projections and current value signals to flag upside.",
-    "Overall Impact": "Blends scoring, impact stats, and all-around contribution.",
-    "Scoring Value Score": "Sorts directly by the composite scoring value score.",
-    "All Around Value Score": "Sorts directly by the all-around value score.",
-  };
-
-  return `
-    <div class="category-grid">
-      ${Object.keys(rankingPresets)
-        .map(
-          (preset) => `
-            <div class="category-card ${preset === activePreset ? "active" : ""}" data-preset-card="${preset}">
-              <h3>${preset}</h3>
-              <p>${descriptions[preset] || "Custom player evaluation preset."}</p>
-            </div>
-          `
-        )
-        .join("")}
-    </div>
-  `;
-}
-
-function scoreRankingRows(rows, weights) {
-  const features = Object.keys(weights).filter((feature) =>
-    rows.some((row) => Number.isFinite(Number(row[feature])))
-  );
-
-  const vectors = zscoreRows(rows, features);
-
-  return rows.map((row, i) => {
-    let score = 0;
-
-    features.forEach((feature, j) => {
-      score += vectors[i][j] * weights[feature];
-    });
-
-    return {
-      ...row,
-      ranking_score: score,
-    };
-  });
-}
-
-function courtShapes() {
-  return [
-    { type: "circle", xref: "x", yref: "y", x0: -7.5, y0: -7.5, x1: 7.5, y1: 7.5, line: { color: "#111827", width: 2 } },
-    { type: "rect", xref: "x", yref: "y", x0: -30, y0: -7.5, x1: 30, y1: -6, line: { color: "#111827", width: 2 }, fillcolor: "#111827" },
-    { type: "rect", xref: "x", yref: "y", x0: -80, y0: -47.5, x1: 80, y1: 143, line: { color: "#334155", width: 2 } },
-    { type: "rect", xref: "x", yref: "y", x0: -60, y0: -47.5, x1: 60, y1: 143, line: { color: "#334155", width: 2 } },
-    { type: "circle", xref: "x", yref: "y", x0: -60, y0: 83, x1: 60, y1: 203, line: { color: "#334155", width: 2 } },
-    { type: "circle", xref: "x", yref: "y", x0: -40, y0: -40, x1: 40, y1: 40, line: { color: "#334155", width: 2 } },
-    { type: "path", xref: "x", yref: "y", path: "M -220 -47.5 L -220 92.5", line: { color: "#334155", width: 2 } },
-    { type: "path", xref: "x", yref: "y", path: "M 220 -47.5 L 220 92.5", line: { color: "#334155", width: 2 } },
-    { type: "path", xref: "x", yref: "y", path: "M -220 92.5 Q 0 300 220 92.5", line: { color: "#334155", width: 2 } },
-  ];
-}
-
-async function renderVersusView() {
-  const players = unique(state.profiles.map((d) => d.PLAYER_NAME));
-  const playerA = document.getElementById("playerASelect")?.value || players[0];
-  const playerB = document.getElementById("playerBSelect")?.value || players[1] || players[0];
-
-  const seasonA = validSeasonForPlayer(playerA, document.getElementById("seasonASelect")?.value);
-  const seasonB = validSeasonForPlayer(playerB, document.getElementById("seasonBSelect")?.value);
-
-  const labelA = `${playerA} ${seasonA}`;
-  const labelB = `${playerB} ${seasonB}`;
-
-  setControls(`
-    <div class="control"><label>Player A</label><select id="playerASelect">${playerOptions(playerA)}</select></div>
-    <div class="control"><label>Season A</label><select id="seasonASelect">${seasonOptionsFromSource(playerA, seasonA)}</select></div>
-    <div class="control"><label>Player B</label><select id="playerBSelect">${playerOptions(playerB)}</select></div>
-    <div class="control"><label>Season B</label><select id="seasonBSelect">${seasonOptionsFromSource(playerB, seasonB)}</select></div>
-  `);
-
-  ["playerASelect", "seasonASelect", "playerBSelect", "seasonBSelect"].forEach((id) => {
-    document.getElementById(id).onchange = renderVersusView;
-  });
-
-  const a = state.profiles.find((d) => d.PLAYER_NAME === playerA && d.SEASON === seasonA);
-  const b = state.profiles.find((d) => d.PLAYER_NAME === playerB && d.SEASON === seasonB);
-  if (!a || !b) return;
-
-  const metrics = [
-    "actual_points_per_shot",
-    "league_expected_pps",
-    "player_expected_pps",
-    "shot_making_per_100_stable",
-    "player_adjusted_edge_per_100_stable",
-    "TS_PCT",
-    "USG_PCT",
-    "NET_RATING",
-    "PIE",
-  ];
-
-  setSummary([
-    { label: `${labelA} Stable Shot Making`, value: fmt(a.shot_making_per_100_stable) },
-    { label: `${labelB} Stable Shot Making`, value: fmt(b.shot_making_per_100_stable) },
-    { label: `${labelA} Shot Quality`, value: fmt(a.league_expected_pps) },
-    { label: `${labelB} Shot Quality`, value: fmt(b.league_expected_pps) },
-  ]);
-
-  setContent(`
-    <div class="card-grid fade-in">
-      ${playerSummaryCard(playerA, seasonA, a)}
-      ${playerSummaryCard(playerB, seasonB, b)}
-    </div>
-
-    <div class="visual-grid fade-in">
-      <div class="panel pulse-card"><h3 class="chart-title">Scoring Profile</h3><div id="versusBars"></div></div>
-      <div class="panel pulse-card"><h3 class="chart-title">Player Style Radar</h3><div id="styleRadar"></div></div>
-      <div class="panel pulse-card"><h3 class="chart-title">Season Progression</h3><div id="seasonProgression"></div></div>
-      <div class="panel pulse-card"><h3 class="chart-title">Box / Role Profile</h3><div id="boxRoleBars"></div></div>
-      <div class="panel full-panel pulse-card"><h3 class="chart-title">Shot Zone Comparison</h3><div id="zoneCompare"></div></div>
-      <div class="panel full-panel pulse-card"><h3 class="chart-title">Interactive Shot Map Overlay</h3><div id="overlayShotMap"></div></div>
-      <div class="stat-pill"><span>Scoring Value %ile</span><strong>${pct(row.scoring_value_score_percentile)}</strong></div>
-      <div class="stat-pill"><span>Shot Making %ile</span><strong>${pct(row.shot_making_per_100_stable_percentile)}</strong></div>
-    </div>
-
-    <div class="panel fade-in">
-      <h3>Detailed Comparison</h3>
-      ${table(metrics.map((m) => ({
-        metric: m,
-        [labelA]: a[m],
-        [labelB]: b[m],
-        difference: Number(a[m]) - Number(b[m]),
-      })), ["metric", labelA, labelB, "difference"])}
-    </div>
-  `);
-
-  drawVersusBars(a, b, labelA, labelB, metrics);
-  drawStyleRadar(a, b, labelA, labelB);
-  drawSeasonProgression(playerA, playerB);
-  drawBoxRoleBars(a, b, labelA, labelB);
-  drawZoneCompare(playerA, seasonA, playerB, seasonB, labelA, labelB);
-  await drawOverlayShotMap(playerA, seasonA, playerB, seasonB, labelA, labelB);
-}
-
-function drawVersusBars(a, b, labelA, labelB, metrics) {
-  Plotly.newPlot("versusBars", [
-    { x: metrics, y: metrics.map((m) => a[m]), type: "bar", name: labelA, marker: { color: "#2563eb" } },
-    { x: metrics, y: metrics.map((m) => b[m]), type: "bar", name: labelB, marker: { color: "#16a34a" } },
-  ], {
-    barmode: "group",
-    height: 440,
-    margin: { l: 45, r: 20, t: 10, b: 130 },
-  }, { responsive: true });
-}
-
-function drawStyleRadar(a, b, labelA, labelB) {
-  const labels = ["Rim", "Paint", "Midrange", "Corner 3", "Above Break 3", "3PT Rate"];
-  const keys = ["rim_rate", "paint_non_ra_rate", "midrange_rate", "corner_3_rate", "above_break_3_rate", "three_point_rate"];
-
-  Plotly.newPlot("styleRadar", [
-    {
-      type: "scatterpolar",
-      r: keys.map((k) => Number(a[k]) || 0),
-      theta: labels,
-      fill: "toself",
-      name: labelA,
-      line: { color: "#2563eb" },
-    },
-    {
-      type: "scatterpolar",
-      r: keys.map((k) => Number(b[k]) || 0),
-      theta: labels,
-      fill: "toself",
-      name: labelB,
-      line: { color: "#16a34a" },
-    },
-  ], {
-    height: 440,
-    margin: { l: 35, r: 35, t: 10, b: 30 },
-    polar: {
-      radialaxis: { visible: true, range: [0, Math.max(0.6, ...keys.map((k) => Number(a[k]) || 0), ...keys.map((k) => Number(b[k]) || 0))] },
-    },
-  }, { responsive: true });
-}
-
-function drawSeasonProgression(playerA, playerB) {
-  const rowsA = state.profiles.filter((d) => d.PLAYER_NAME === playerA).sort((a, b) => a.SEASON.localeCompare(b.SEASON));
-  const rowsB = state.profiles.filter((d) => d.PLAYER_NAME === playerB).sort((a, b) => a.SEASON.localeCompare(b.SEASON));
-
-  Plotly.newPlot("seasonProgression", [
-    {
-      x: rowsA.map((d) => d.SEASON),
-      y: rowsA.map((d) => d.shot_making_per_100_stable),
-      type: "scatter",
-      mode: "lines+markers",
-      name: `${playerA} Stable Shot Making`,
-      line: { color: "#2563eb", width: 3 },
-    },
-    {
-      x: rowsB.map((d) => d.SEASON),
-      y: rowsB.map((d) => d.shot_making_per_100_stable),
-      type: "scatter",
-      mode: "lines+markers",
-      name: `${playerB} Stable Shot Making`,
-      line: { color: "#16a34a", width: 3 },
-    },
-  ], {
-    height: 440,
-    margin: { l: 45, r: 20, t: 10, b: 45 },
-    yaxis: { title: "Stable Shot Making / 100" },
-  }, { responsive: true });
-}
-
-function drawBoxRoleBars(a, b, labelA, labelB) {
-  const roleMetrics = ["PTS", "AST", "REB", "USG_PCT"];
-  const displayLabels = ["Points", "Assists", "Rebounds", "Usage"];
-
-  Plotly.newPlot("boxRoleBars", [
-    {
-      x: displayLabels,
-      y: roleMetrics.map((m) => a[m]),
-      type: "bar",
-      name: labelA,
-      marker: { color: "#2563eb" },
-    },
-    {
-      x: displayLabels,
-      y: roleMetrics.map((m) => b[m]),
-      type: "bar",
-      name: labelB,
-      marker: { color: "#16a34a" },
-    },
-  ], {
-    barmode: "group",
-    height: 440,
-    margin: { l: 45, r: 20, t: 10, b: 45 },
-  }, { responsive: true });
-}
-
-function drawZoneCompare(playerA, seasonA, playerB, seasonB, labelA, labelB) {
-  const zonesA = state.zones.filter((d) => d.PLAYER_NAME === playerA && d.SEASON === seasonA);
-  const zonesB = state.zones.filter((d) => d.PLAYER_NAME === playerB && d.SEASON === seasonB);
-
-  const zoneNames = unique([...zonesA, ...zonesB].map((d) => d.SHOT_ZONE_BASIC));
-
-  const byZone = (rows, zone, metric) => {
-    const row = rows.find((d) => d.SHOT_ZONE_BASIC === zone);
-    return row ? Number(row[metric]) : null;
-  };
-
-  Plotly.newPlot("zoneCompare", [
-    {
-      x: zoneNames,
-      y: zoneNames.map((z) => byZone(zonesA, z, "actual_points_per_shot")),
-      type: "bar",
-      name: `${labelA} Actual PPS`,
-      marker: { color: "#2563eb" },
-    },
-    {
-      x: zoneNames,
-      y: zoneNames.map((z) => byZone(zonesA, z, "league_expected_pps")),
-      type: "bar",
-      name: `${labelA} Expected PPS`,
-      marker: { color: "#93c5fd" },
-    },
-    {
-      x: zoneNames,
-      y: zoneNames.map((z) => byZone(zonesB, z, "actual_points_per_shot")),
-      type: "bar",
-      name: `${labelB} Actual PPS`,
-      marker: { color: "#16a34a" },
-    },
-    {
-      x: zoneNames,
-      y: zoneNames.map((z) => byZone(zonesB, z, "league_expected_pps")),
-      type: "bar",
-      name: `${labelB} Expected PPS`,
-      marker: { color: "#86efac" },
-    },
-  ], {
-    barmode: "group",
-    height: 500,
-    margin: { l: 45, r: 20, t: 10, b: 120 },
-    yaxis: { title: "Points Per Shot" },
-  }, { responsive: true });
-}
-
-async function drawOverlayShotMap(playerA, seasonA, playerB, seasonB, labelA, labelB) {
-  const metaA = state.shotIndex.find((d) => d.PLAYER_NAME === playerA && d.SEASON === seasonA);
-  const metaB = state.shotIndex.find((d) => d.PLAYER_NAME === playerB && d.SEASON === seasonB);
-
-  const shotsA = metaA ? await loadJson(metaA.file) : [];
-  const shotsB = metaB ? await loadJson(metaB.file) : [];
-
-  const sample = (rows) => rows.length > 900 ? rows.filter((_, i) => i % Math.ceil(rows.length / 900) === 0) : rows;
-
-  const aRows = sample(shotsA);
-  const bRows = sample(shotsB);
-
-  Plotly.newPlot("overlayShotMap", [
-    {
-      x: aRows.map((d) => d.LOC_X),
-      y: aRows.map((d) => d.LOC_Y),
-      mode: "markers",
-      type: "scatter",
-      name: labelA,
-      marker: { color: "#2563eb", size: 6, opacity: 0.55 },
-      text: aRows.map((d) => `${labelA}<br>${d.ACTION_TYPE}<br>${d.SHOT_ZONE_BASIC}<br>EP: ${fmt(d.LEAGUE_EXPECTED_POINTS)}`),
-      hoverinfo: "text",
-    },
-    {
-      x: bRows.map((d) => d.LOC_X),
-      y: bRows.map((d) => d.LOC_Y),
-      mode: "markers",
-      type: "scatter",
-      name: labelB,
-      marker: { color: "#16a34a", size: 6, opacity: 0.55 },
-      text: bRows.map((d) => `${labelB}<br>${d.ACTION_TYPE}<br>${d.SHOT_ZONE_BASIC}<br>EP: ${fmt(d.LEAGUE_EXPECTED_POINTS)}`),
-      hoverinfo: "text",
-    },
-  ], {
-    height: 680,
-    plot_bgcolor: "#f8f4ea",
-    paper_bgcolor: "#ffffff",
-    shapes: courtShapes(),
-    xaxis: { title: "", range: [-250, 250], showgrid: false, zeroline: false },
-    yaxis: { title: "", range: [-60, 420], showgrid: false, zeroline: false, scaleanchor: "x", scaleratio: 1 },
-    margin: { l: 20, r: 20, t: 10, b: 20 },
-  }, { responsive: true });
-}
-
-function playerSummaryCard(name, season, row) {
-  return `
-    <div class="player-card">
-      <h2>${name}</h2>
-      <div class="season">${season}</div>
-      <div class="stat-grid">
-        <div class="stat-pill"><span>Actual PPS</span><strong>${fmt(row.actual_points_per_shot)}</strong></div>
-        <div class="stat-pill"><span>Shot Quality</span><strong>${fmt(row.league_expected_pps)}</strong></div>
-        <div class="stat-pill"><span>Stable Shot Making / 100</span><strong>${fmt(row.shot_making_per_100_stable)}</strong></div>
-        <div class="stat-pill"><span>Stable Player Edge / 100</span><strong>${fmt(row.player_adjusted_edge_per_100_stable)}</strong></div>
-        <div class="stat-pill"><span>TS%</span><strong>${pct(row.TS_PCT)}</strong></div>
-        <div class="stat-pill"><span>Usage%</span><strong>${pct(row.USG_PCT)}</strong></div>
-      </div>
-    </div>
-  `;
-}
-
-function renderLeagueView() {
-  const seasons = unique(state.profiles.map((d) => d.SEASON));
-  const season = document.getElementById("seasonSelect")?.value || seasons[seasons.length - 1];
-  const preset = document.getElementById("presetSelect")?.value || "Scoring Value";
-  const metric = document.getElementById("metricSelect")?.value || "ranking_score";
-  const minShots = Number(document.getElementById("minShots")?.value || 300);
-  const minUsage = Number(document.getElementById("minUsage")?.value || 0);
-  const minTs = Number(document.getElementById("minTs")?.value || 0);
-  const maxAge = Number(document.getElementById("maxAge")?.value || 99);
-  const minBreakout = Number(document.getElementById("minBreakout")?.value || 0);
-
-  const metricOptions = [
-    "ranking_score",
-    "scoring_value_score",
-    "all_around_value_score",
-    "actual_points_per_shot",
-    "league_expected_pps",
-    "player_expected_pps",
-    "shot_making_per_100",
-    "shot_making_per_100_stable",
-    "player_adjusted_edge_per_100",
-    "player_adjusted_edge_per_100_stable",
-    "TS_PCT",
-    "USG_PCT",
-    "NET_RATING",
-    "PIE",
-    "breakout_probability",
-  ];
-
-  setControls(`
-    <div class="control"><label>Season</label><select id="seasonSelect">${allSeasonOptions(season)}</select></div>
-    <div class="control"><label>Ranking Preset</label><select id="presetSelect">${Object.keys(rankingPresets).map((p) => `<option value="${p}" ${p === preset ? "selected" : ""}>${p}</option>`).join("")}</select></div>
-    <div class="control"><label>Sort Metric</label><select id="metricSelect">${metricOptions.map((m) => `<option value="${m}" ${m === metric ? "selected" : ""}>${m}</option>`).join("")}</select></div>
-    <div class="control"><label>Minimum shots</label><input id="minShots" type="number" value="${minShots}" min="0" step="50" /></div>
-    <div class="control"><label>Min Usage %</label><input id="minUsage" type="number" value="${minUsage}" min="0" max="1" step="0.01" /></div>
-    <div class="control"><label>Min TS%</label><input id="minTs" type="number" value="${minTs}" min="0" max="1" step="0.01" /></div>
-    <div class="control"><label>Max Age</label><input id="maxAge" type="number" value="${maxAge}" min="18" max="45" step="1" /></div>
-    <div class="control"><label>Min Breakout Prob</label><input id="minBreakout" type="number" value="${minBreakout}" min="0" max="1" step="0.05" /></div>
-  `);
-
-  ["seasonSelect", "presetSelect", "metricSelect", "minShots", "minUsage", "minTs", "maxAge", "minBreakout"].forEach((id) => {
-    document.getElementById(id).onchange = renderLeagueView;
-  });
-
-  let rows = state.profiles.filter((d) => {
-    const usage = Number(d.USG_PCT) || 0;
-    const ts = Number(d.TS_PCT) || 0;
-    const age = Number(d.AGE) || 99;
-    const breakout = Number(d.breakout_probability) || 0;
-
-    return (
-      d.SEASON === season &&
-      Number(d.shots) >= minShots &&
-      usage >= minUsage &&
-      ts >= minTs &&
-      age <= maxAge &&
-      breakout >= minBreakout
-    );
-  });
-  rows = scoreRankingRows(rows, rankingPresets[preset]);
-  rows = rows.sort((a, b) => Number(b[metric]) - Number(a[metric]));
-
-  const top = rows.slice(0, 30);
-
-  setSummary([
-    { label: "Players", value: rows.length },
-    { label: "Preset", value: preset },
-    { label: "Avg Actual PPS", value: fmt(avg(rows, "actual_points_per_shot")) },
-    { label: "Avg Stable Shot Making", value: fmt(avg(rows, "shot_making_per_100_stable")) },
-  ]);
-
-  setContent(`
-    ${rankingPresetCards(preset)}
-
-    <div class="panel"><div id="leagueBar"></div></div>
-    <div class="panel"><div id="leagueScatter"></div></div>
-    <div class="panel">
-      <h3>${season} Player Rankings</h3>
-      ${table(rows, [
-        "PLAYER_NAME",
-        "SEASON",
-        "shots",
-        "ranking_score",
-        "scoring_value_score",
-        "all_around_value_score",
-        "actual_points_per_shot",
-        "league_expected_pps",
-        "shot_making_per_100_stable",
-        "player_adjusted_edge_per_100_stable",
-        "TS_PCT",
-        "USG_PCT",
-        "NET_RATING",
-        "breakout_probability",
-        "scoring_value_score_percentile",
-        "all_around_value_score_percentile",
-        "shot_making_per_100_stable_percentile",
-        "TS_PCT_percentile",
-        "USG_PCT_percentile",
-      ])}
-    </div>
-  `);
-
-  document.querySelectorAll("[data-preset-card]").forEach((card) => {
-    card.addEventListener("click", () => {
-      document.getElementById("presetSelect").value = card.dataset.presetCard;
-      document.getElementById("metricSelect").value = "ranking_score";
-      renderLeagueView();
-    });
-  });
-
-  Plotly.newPlot(
-    "leagueBar",
-    [
-      {
-        x: top.map((d) => d[metric]),
-        y: top.map((d) => d.PLAYER_NAME),
-        type: "bar",
-        orientation: "h",
-        marker: { color: "#2563eb" },
-        hovertemplate: "%{y}<br>Value: %{x:.2f}<extra></extra>",
-      },
-    ],
-    {
-      title: `Top Players by ${metric}`,
-      height: 760,
-      yaxis: { autorange: "reversed" },
-      margin: { l: 140, r: 20, t: 45, b: 40 },
-    },
-    { responsive: true }
-  );
-
-  Plotly.newPlot(
-    "leagueScatter",
-    [
-      {
-        x: rows.map((d) => d.league_expected_pps),
-        y: rows.map((d) => d.shot_making_per_100_stable),
-        text: rows.map((d) => d.PLAYER_NAME),
-        mode: "markers",
-        type: "scatter",
-        marker: {
-          size: rows.map((d) => Math.max(7, Math.sqrt(Number(d.shots)) / 2)),
-          color: rows.map((d) => d.ranking_score),
-          colorscale: "Viridis",
-          showscale: true,
-          line: { color: "white", width: 0.7 },
-        },
-        hovertemplate: "%{text}<br>Shot Quality: %{x:.2f}<br>Stable Shot Making: %{y:.2f}<extra></extra>",
-      },
-    ],
-    {
-      title: "Shot Quality vs Stable Shot Making",
-      height: 540,
-      xaxis: { title: "League Expected PPS" },
-      yaxis: { title: "Stable Shot Making / 100" },
-      margin: { l: 60, r: 20, t: 45, b: 50 },
-    },
-    { responsive: true }
-  );
-}
-
-function renderCompareView() {
-  const players = unique(state.profiles.map((d) => d.PLAYER_NAME));
-  const player = document.getElementById("playerSelect")?.value || players[0];
-  const metric = document.getElementById("metricSelect")?.value || "shot_making_per_100_stable";
-  const metrics = ["actual_points_per_shot", "league_expected_pps", "player_expected_pps", "shot_making_per_100", "shot_making_per_100_stable", "player_adjusted_edge_per_100", "player_adjusted_edge_per_100_stable", "TS_PCT", "USG_PCT", "NET_RATING", "PIE"];
-
-  setControls(`
-    <div class="control"><label>Player</label><select id="playerSelect">${playerOptions(player)}</select></div>
-    <div class="control"><label>Metric</label><select id="metricSelect">${metrics.map((m) => `<option value="${m}" ${m === metric ? "selected" : ""}>${m}</option>`).join("")}</select></div>
-  `);
-
-  document.getElementById("playerSelect").onchange = renderCompareView;
-  document.getElementById("metricSelect").onchange = renderCompareView;
-
-  const rows = state.profiles.filter((d) => d.PLAYER_NAME === player).sort((a, b) => a.SEASON.localeCompare(b.SEASON));
-  setSummary([]);
-  setContent(`<div class="panel"><div id="compareChart"></div></div><div class="panel">${table(rows, ["SEASON", "shots", "actual_points_per_shot", "league_expected_pps", "player_expected_pps", "shot_making_per_100_stable", "TS_PCT", "USG_PCT", "NET_RATING"])}</div>`);
-  Plotly.newPlot("compareChart", [{ x: rows.map((d) => d.SEASON), y: rows.map((d) => d[metric]), type: "scatter", mode: "lines+markers", name: metric }], { title: `${player} - ${metric}`, height: 420 }, { responsive: true });
-}
-
-function renderTrendsView() {
-  const players = unique(state.gameProfiles.map((d) => d.PLAYER_NAME));
-  const player = document.getElementById("trendPlayerSelect")?.value || players[0];
-  const season = validSeasonForPlayer(player, document.getElementById("trendSeasonSelect")?.value, state.gameProfiles);
-
-  setControls(`
-    <div class="control"><label>Player</label><select id="trendPlayerSelect">${playerOptions(player)}</select></div>
-    <div class="control"><label>Season</label><select id="trendSeasonSelect">${seasonOptionsFromSource(player, season, state.gameProfiles)}</select></div>
-  `);
-
-  document.getElementById("trendPlayerSelect").onchange = renderTrendsView;
-  document.getElementById("trendSeasonSelect").onchange = renderTrendsView;
-
-  const rows = state.gameProfiles.filter((d) => d.PLAYER_NAME === player && d.SEASON === season).sort((a, b) => String(a.GAME_DATE).localeCompare(String(b.GAME_DATE)));
-
-  setSummary([
-    { label: "Games", value: rows.length },
-    { label: "Avg Actual PPS", value: fmt(avg(rows, "actual_points_per_shot")) },
-    { label: "Avg Expected PPS", value: fmt(avg(rows, "league_expected_pps")) },
-    { label: "Avg Shot Making / 100", value: fmt(avg(rows, "shot_making_per_100")) },
-  ]);
-
-  setContent(`<div class="panel"><div id="trendPpsChart"></div></div><div class="panel"><div id="trendShotMakingChart"></div></div><div class="panel">${table(rows, ["GAME_DATE", "shots", "actual_points_per_shot", "league_expected_pps", "player_expected_pps", "shot_making_per_100", "rolling_5_shot_making_per_100"])}</div>`);
-
-  Plotly.newPlot("trendPpsChart", [
-    { x: rows.map((d) => d.GAME_DATE), y: rows.map((d) => d.actual_points_per_shot), type: "scatter", mode: "lines+markers", name: "Actual PPS" },
-    { x: rows.map((d) => d.GAME_DATE), y: rows.map((d) => d.league_expected_pps), type: "scatter", mode: "lines+markers", name: "League Expected PPS" },
-    { x: rows.map((d) => d.GAME_DATE), y: rows.map((d) => d.player_expected_pps), type: "scatter", mode: "lines+markers", name: "Player Expected PPS" },
-  ], { title: `${player} ${season} - Points Per Shot Trend`, height: 430 }, { responsive: true });
-
-  Plotly.newPlot("trendShotMakingChart", [
-    { x: rows.map((d) => d.GAME_DATE), y: rows.map((d) => d.shot_making_per_100), type: "bar", name: "Game Shot Making / 100", marker: { color: "#94a3b8" } },
-    { x: rows.map((d) => d.GAME_DATE), y: rows.map((d) => d.rolling_5_shot_making_per_100), type: "scatter", mode: "lines", name: "Rolling 5-game", line: { color: "#2563eb", width: 3 } },
-  ], { title: `${player} ${season} - Shot Making Trend`, height: 430 }, { responsive: true });
-}
-
-function renderProjectionView() {
-  if (!state.projections.length) {
-    setControls("");
-    setSummary([]);
-    setContent("<div class='panel'><h3>Projection data missing</h3><p class='note'>Run the player projection notebook and export player_projections.json.</p></div>");
-    return;
-  }
-
-  const players = unique(state.projections.map((d) => d.PLAYER_NAME));
-  const player = document.getElementById("projectionPlayerSelect")?.value || players[0];
-  const row = state.projections.find((d) => d.PLAYER_NAME === player);
-
-  setControls(`<div class="control"><label>Player</label><select id="projectionPlayerSelect">${players.map((p) => `<option value="${p}" ${p === player ? "selected" : ""}>${p}</option>`).join("")}</select></div>`);
-  document.getElementById("projectionPlayerSelect").onchange = renderProjectionView;
-
-  const metrics = [
-    ["Current Actual PPS", row.actual_points_per_shot],
-    ["Projected Actual PPS", row.projected_next_actual_points_per_shot],
-    ["Current Shot Making / 100", row.shot_making_per_100],
-    ["Projected Shot Making / 100", row.projected_next_shot_making_per_100],
-    ["Current Player Edge / 100", row.player_adjusted_edge_per_100],
-    ["Projected Player Edge / 100", row.projected_next_player_adjusted_edge_per_100],
-  ];
-
-  setSummary([
-    { label: "Base Season", value: row.SEASON },
-    { label: "Breakout Probability", value: pct(row.breakout_probability) },
-    { label: "Projected TS%", value: pct(row.projected_next_TS_PCT) },
-    { label: "Projected Usage%", value: pct(row.projected_next_USG_PCT) },
-  ]);
-
-  setContent(`<div class="two-col"><div class="panel"><div id="projectionBars"></div></div><div class="panel"><h3>Projection Snapshot</h3><p><span class="badge">${player}</span></p>${table([row], ["PLAYER_NAME", "SEASON", "shots", "actual_points_per_shot", "projected_next_actual_points_per_shot", "shot_making_per_100", "projected_next_shot_making_per_100", "breakout_probability"])}</div></div><div class="panel"><h3>Projection Model Metrics</h3>${table(state.projectionMetrics, Object.keys(state.projectionMetrics[0] || {}))}</div>`);
-
-  Plotly.newPlot("projectionBars", [
-    { x: metrics.map((d) => d[0]), y: metrics.map((d) => d[1]), type: "bar", marker: { color: "#2563eb" } },
-  ], { title: "Current vs Projected Scoring Indicators", height: 520, margin: { l: 40, r: 20, t: 40, b: 150 } }, { responsive: true });
-}
-
-function renderSimilarityView() {
-  const players = unique(state.profiles.map((d) => d.PLAYER_NAME));
-  const player = document.getElementById("simPlayerSelect")?.value || players[0];
-  const season = validSeasonForPlayer(player, document.getElementById("simSeasonSelect")?.value);
-  const mode = document.getElementById("simModeSelect")?.value || "overall";
-
-  const featureSets = {
-    overall: ["actual_points_per_shot", "league_expected_pps", "player_expected_pps", "shot_making_per_100_stable", "player_adjusted_edge_per_100_stable", "TS_PCT", "USG_PCT", "NET_RATING", "PIE"],
-    shot_diet: ["rim_rate", "paint_non_ra_rate", "midrange_rate", "corner_3_rate", "above_break_3_rate", "three_point_rate", "avg_shot_distance"],
-    shot_making: ["actual_points_per_shot", "league_expected_pps", "player_expected_pps", "shot_making_per_100_stable", "player_adjusted_edge_per_100_stable", "avg_league_make_prob", "avg_player_make_prob"],
-    impact: ["TS_PCT", "USG_PCT", "OFF_RATING", "DEF_RATING", "NET_RATING", "AST_PCT", "REB_PCT", "PIE"],
-  };
-
-  setControls(`<div class="control"><label>Player</label><select id="simPlayerSelect">${playerOptions(player)}</select></div><div class="control"><label>Season</label><select id="simSeasonSelect">${seasonOptionsFromSource(player, season)}</select></div><div class="control"><label>Similarity Mode</label><select id="simModeSelect">${Object.keys(featureSets).map((m) => `<option value="${m}" ${m === mode ? "selected" : ""}>${m}</option>`).join("")}</select></div>`);
-  ["simPlayerSelect", "simSeasonSelect", "simModeSelect"].forEach((id) => document.getElementById(id).onchange = renderSimilarityView);
-
-  const features = featureSets[mode].filter((f) => state.profiles.some((row) => row[f] !== undefined));
-  const rows = state.profiles.filter((row) => row.shots >= 100);
-  const selectedIndex = rows.findIndex((row) => row.PLAYER_NAME === player && row.SEASON === season);
-
-  if (selectedIndex < 0) {
-    setSummary([]);
-    setContent("<div class='panel'>No similarity data found.</div>");
-    return;
-  }
-
-  const vectors = zscoreRows(rows, features);
-  const selectedVector = vectors[selectedIndex];
-
-  const sims = rows
-    .map((row, i) => ({
-      player: row.PLAYER_NAME,
-      season: row.SEASON,
-      shots: row.shots,
-      similarity: cosineSimilarity(selectedVector, vectors[i]),
-      actual_points_per_shot: row.actual_points_per_shot,
-      league_expected_pps: row.league_expected_pps,
-      shot_making_per_100_stable: row.shot_making_per_100_stable,
-      player_adjusted_edge_per_100_stable: row.player_adjusted_edge_per_100_stable,
-    }))
-    .filter((row) => !(row.player === player && row.season === season))
-    .sort((a, b) => b.similarity - a.similarity)
-    .slice(0, 15);
-
-  setSummary([
-    { label: "Mode", value: mode },
-    { label: "Features", value: features.length },
-    { label: "Candidates", value: rows.length },
-    { label: "Top Match", value: sims[0]?.player || "N/A" },
-  ]);
-
-  setContent(`<div class="panel"><h3>Most Similar Players</h3>${table(sims, ["player", "season", "similarity", "shots", "actual_points_per_shot", "league_expected_pps", "shot_making_per_100_stable", "player_adjusted_edge_per_100_stable"])}</div><div class="panel"><div id="similarityScatter"></div></div>`);
-
-  Plotly.newPlot("similarityScatter", [{
-    x: sims.map((d) => d.league_expected_pps),
-    y: sims.map((d) => d.shot_making_per_100_stable),
-    text: sims.map((d) => `${d.player} ${d.season}`),
-    mode: "markers",
-    type: "scatter",
-    marker: { size: sims.map((d) => 10 + d.similarity * 12), color: sims.map((d) => d.similarity), colorscale: "Viridis", showscale: true },
-    hovertemplate: "%{text}<br>Shot Quality: %{x:.2f}<br>Stable Shot Making: %{y:.2f}<extra></extra>",
-  }], { title: "Similar Players: Shot Quality vs Stable Shot Making", height: 500, xaxis: { title: "League Expected PPS" }, yaxis: { title: "Stable Shot Making / 100" } }, { responsive: true });
-}
-
-async function renderPlayerView() {
-  const players = unique(state.profiles.map((d) => d.PLAYER_NAME));
-  const player = document.getElementById("playerSelect")?.value || players[0];
-  const season = validSeasonForPlayer(player, document.getElementById("seasonSelect")?.value);
-
-  setControls(`<div class="control"><label>Player</label><select id="playerSelect">${playerOptions(player)}</select></div><div class="control"><label>Season</label><select id="seasonSelect">${seasonOptionsFromSource(player, season)}</select></div>`);
-  document.getElementById("playerSelect").onchange = renderPlayerView;
-  document.getElementById("seasonSelect").onchange = renderPlayerView;
-
-  const profile = state.profiles.find((d) => d.PLAYER_NAME === player && d.SEASON === season);
-  if (!profile) return;
-
-  setSummary([
-    { label: "Actual PPS", value: fmt(profile.actual_points_per_shot) },
-    { label: "League Expected PPS", value: fmt(profile.league_expected_pps) },
-    { label: "Stable Shot Making / 100", value: fmt(profile.shot_making_per_100_stable) },
-    { label: "Stable Player Edge / 100", value: fmt(profile.player_adjusted_edge_per_100_stable) },
-  ]);
-
-  setContent(`<div class="grid"><div class="panel"><div id="shotChart"></div></div><div class="panel"><h3>Best / Worst Zones</h3><p><strong>Best:</strong> ${profile.best_zone || "N/A"} (${fmt(profile.best_zone_shot_making_per_100)} per 100)</p><p><strong>Worst:</strong> ${profile.worst_zone || "N/A"} (${fmt(profile.worst_zone_shot_making_per_100)} per 100)</p><h3>Similar Players</h3><div id="similarPlayers"></div></div></div><div class="panel"><div id="zoneChart"></div></div><div class="panel"><h3>Zone Table</h3><div id="zoneTable"></div></div>`);
-
-  const shotMeta = state.shotIndex.find((d) => d.PLAYER_NAME === player && d.SEASON === season);
-  const shots = shotMeta ? await loadJson(shotMeta.file) : [];
-  drawShotChart(shots);
-
-  const zoneData = state.zones.filter((d) => d.PLAYER_NAME === player && d.SEASON === season);
-  drawZoneChart(zoneData);
-  document.getElementById("zoneTable").innerHTML = table(zoneData, ["SHOT_ZONE_BASIC", "attempts", "actual_points_per_shot", "league_expected_pps", "player_expected_pps", "shot_making_per_100"]);
-  renderSimilar(player, season);
-}
-
-function drawShotChart(shots) {
-  const makes = shots.filter((d) => Number(d.SHOT_MADE_FLAG) === 1);
-  const misses = shots.filter((d) => Number(d.SHOT_MADE_FLAG) === 0);
-  const trace = (rows, name, color) => ({
-    x: rows.map((d) => d.LOC_X),
-    y: rows.map((d) => d.LOC_Y),
-    mode: "markers",
-    type: "scatter",
-    name,
-    marker: { color, size: 7, opacity: 0.7, line: { color: "white", width: 0.5 } },
-    text: rows.map((d) => `${d.ACTION_TYPE}<br>${d.SHOT_ZONE_BASIC}<br>League EP: ${fmt(d.LEAGUE_EXPECTED_POINTS)}<br>Player EP: ${fmt(d.PLAYER_EXPECTED_POINTS)}`),
-    hoverinfo: "text",
-  });
-
-  Plotly.newPlot("shotChart", [trace(misses, "Miss", "#dc2626"), trace(makes, "Make", "#16a34a")], {
-    title: "Shot Detail",
-    height: 660,
-    plot_bgcolor: "#f8f4ea",
-    paper_bgcolor: "#ffffff",
-    shapes: courtShapes(),
-    xaxis: { title: "", range: [-250, 250], showgrid: false, zeroline: false },
-    yaxis: { title: "", range: [-60, 420], showgrid: false, zeroline: false, scaleanchor: "x", scaleratio: 1 },
-    margin: { l: 20, r: 20, t: 40, b: 20 },
-  }, { responsive: true });
-}
-
-function drawZoneChart(rows) {
-  const sorted = [...rows].sort((a, b) => Number(b.league_expected_pps) - Number(a.league_expected_pps));
-  Plotly.newPlot("zoneChart", [
-    { x: sorted.map((d) => d.SHOT_ZONE_BASIC), y: sorted.map((d) => d.actual_points_per_shot), type: "bar", name: "Actual PPS" },
-    { x: sorted.map((d) => d.SHOT_ZONE_BASIC), y: sorted.map((d) => d.league_expected_pps), type: "bar", name: "League Expected PPS" },
-    { x: sorted.map((d) => d.SHOT_ZONE_BASIC), y: sorted.map((d) => d.player_expected_pps), type: "bar", name: "Player Expected PPS" },
-  ], { title: "Zone Shot Quality vs Results", barmode: "group", height: 430, margin: { l: 40, r: 20, t: 40, b: 100 } }, { responsive: true });
-}
-
-function renderSimilar(player, season) {
-  const row = state.similar.find((d) => d.PLAYER_NAME === player && d.SEASON === season);
-  let sims = row?.similar_players || [];
-  if (typeof sims === "string") {
-    try { sims = JSON.parse(sims.replaceAll("'", '"')); } catch { sims = []; }
-  }
-  document.getElementById("similarPlayers").innerHTML = sims.length ? table(sims, ["player", "season", "similarity"]) : "<p>No similar players found.</p>";
-}
-
-function renderCalibrationView() {
-  if (!state.calibrationCurve.length && !state.calibrationMetrics.length) {
-    setControls("");
-    setSummary([]);
-    setContent("<div class='panel'><h3>Calibration data missing</h3><p class='note'>Export calibration_metrics.json and calibration_curve.json first.</p></div>");
-    return;
-  }
-
-  setControls("");
-  setSummary([
-    { label: "Curve Rows", value: state.calibrationCurve.length },
-    { label: "Metric Rows", value: state.calibrationMetrics.length },
-    { label: "Purpose", value: "Expected value quality" },
-    { label: "Best Use", value: "Probability trust" },
-  ]);
-
-  setContent(`<div class="panel"><div id="calibrationChart"></div></div><div class="panel"><h3>Calibration Metrics</h3>${table(state.calibrationMetrics, Object.keys(state.calibrationMetrics[0] || {}))}</div>`);
-
-  const models = unique(state.calibrationCurve.map((d) => d.model));
-  const traces = models.map((model) => {
-    const rows = state.calibrationCurve.filter((d) => d.model === model);
-    return {
-      x: rows.map((d) => d.predicted_prob),
-      y: rows.map((d) => d.actual_make_rate),
-      mode: "lines+markers",
-      type: "scatter",
-      name: model,
-    };
-  });
-
-  traces.push({
-    x: [0, 1],
-    y: [0, 1],
-    mode: "lines",
-    type: "scatter",
-    name: "Perfect calibration",
-    line: { dash: "dash", color: "#64748b" },
-  });
-
-  Plotly.newPlot("calibrationChart", traces, {
-    title: "Predicted Make Probability vs Actual Make Rate",
-    height: 540,
-    xaxis: { title: "Predicted probability" },
-    yaxis: { title: "Actual make rate" },
-  }, { responsive: true });
 }
 
 function percentileRank(values, value) {
@@ -1137,43 +407,6 @@ function addSeasonPercentiles() {
     "all_around_value_score",
   ];
 
-const playerDataCache = new Map();
-
-function playerFolder(playerId) {
-  return `data/players/${playerId}`;
-}
-
-function safeSeason(season) {
-  return String(season).replace("/", "-");
-}
-
-function playerIdFromName(playerName) {
-  const row = state.profiles.find((profile) => profile.PLAYER_NAME === playerName);
-  return row ? String(row.PLAYER_ID) : null;
-}
-
-async function loadPlayerSeasonFile(playerId, season, kind) {
-  const key = `${kind}:${playerId}:${season}`;
-
-  if (playerDataCache.has(key)) {
-    return playerDataCache.get(key);
-  }
-
-  const path = `${playerFolder(playerId)}/${kind}_${safeSeason(season)}.json`;
-  const promise = loadJson(path).catch(() => []);
-
-  playerDataCache.set(key, promise);
-  return promise;
-}
-
-async function loadPlayerGames(playerId, season) {
-  return loadPlayerSeasonFile(playerId, season, "games");
-}
-
-async function loadPlayerZones(playerId, season) {
-  return loadPlayerSeasonFile(playerId, season, "zones");
-}
-
   const bySeason = new Map();
 
   state.profiles.forEach((row) => {
@@ -1186,8 +419,10 @@ async function loadPlayerZones(playerId, season) {
     const out = { ...row };
 
     percentileMetrics.forEach((metric) => {
-      const values = seasonRows.map((r) => r[metric]);
-      const percentile = percentileRank(values, row[metric]);
+      const percentile = percentileRank(
+        seasonRows.map((seasonRow) => seasonRow[metric]),
+        row[metric]
+      );
 
       if (percentile !== null) {
         out[`${metric}_percentile`] = percentile;
@@ -1198,12 +433,177 @@ async function loadPlayerZones(playerId, season) {
   });
 }
 
-function renderModelsView() {
-  setControls("");
-  setSummary([]);
-  const tables = [`<div class="panel"><h3>Shot Model Metrics</h3>${table(state.metrics, Object.keys(state.metrics[0] || {}))}</div>`];
-  if (state.breakoutMetrics.length) tables.push(`<div class="panel"><h3>Breakout Model Metrics</h3>${table(state.breakoutMetrics, Object.keys(state.breakoutMetrics[0] || {}))}</div>`);
-  setContent(tables.join(""));
+function rankingScore(row, presetName) {
+  const weights = rankingPresets[presetName] || rankingPresets["Scoring Value"];
+  return Object.entries(weights).reduce(
+    (sum, [metric, weight]) => sum + numberValue(row[metric]) * weight,
+    0
+  );
+}
+
+function metricClass(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  if (number > 0) return "positive";
+  if (number < 0) return "negative";
+  return "";
+}
+
+function plotConfig() {
+  return {
+    responsive: true,
+    displayModeBar: false,
+  };
+}
+
+function plotLayout(extra = {}) {
+  return {
+    paper_bgcolor: "rgba(0,0,0,0)",
+    plot_bgcolor: "rgba(0,0,0,0)",
+    margin: { l: 44, r: 18, t: 30, b: 44 },
+    font: { family: "Inter, system-ui, sans-serif", color: "#0f172a" },
+    ...extra,
+  };
+}
+
+function renderPlot(id, traces, layout = {}) {
+  const el = document.getElementById(id);
+  if (!el || !window.Plotly) return;
+
+  Plotly.react(el, traces, plotLayout(layout), plotConfig());
+}
+
+function statCard(label, value, helper = "") {
+  return `
+    <div class="stat-pill pulse-card">
+      <span>${label}</span>
+      <strong>${value}</strong>
+      ${helper ? `<small>${helper}</small>` : ""}
+    </div>
+  `;
+}
+
+function playerSummaryCard(row, label = "") {
+  if (!row) return "";
+
+  return `
+    <div class="card pulse-card">
+      <p class="eyebrow">${label || row.SEASON}</p>
+      <h2>${escapeHtml(row.PLAYER_NAME)}</h2>
+      <div class="stats-grid">
+        ${statCard("PTS", fmt(row.PTS, 1))}
+        ${statCard("TS%", pct(row.TS_PCT, 1))}
+        ${statCard("Usage", pct(row.USG_PCT, 1))}
+        ${statCard("Scoring %ile", pct(row.scoring_value_score_percentile, 0))}
+        ${statCard("Actual PPS", fmt(row.actual_points_per_shot, 3))}
+        ${statCard("Expected PPS", fmt(row.league_expected_pps, 3))}
+        ${statCard("Shot Making", signed(row.shot_making_per_100_stable, 2))}
+        ${statCard("Player Edge", signed(row.player_adjusted_edge_per_100_stable, 2))}
+      </div>
+    </div>
+  `;
+}
+
+function rankingPresetCards(activePreset) {
+  const descriptions = {
+    "Scoring Value": "Balances efficiency, shot making, shot quality, and usage.",
+    "Shot Creation": "Rewards self-created scoring profile and difficult shot value.",
+    "Efficient Role Scorer": "Finds efficient scorers with lower-friction shot diets.",
+    "Breakout Watch": "Uses projections and current value signals to flag upside.",
+    "Overall Impact": "Blends scoring, impact stats, and all-around contribution.",
+    "Scoring Value Score": "Sorts directly by the composite scoring value score.",
+    "All Around Value Score": "Sorts directly by the all-around value score.",
+  };
+
+  return `
+    <div class="category-grid">
+      ${Object.keys(rankingPresets)
+        .map(
+          (preset) => `
+            <button class="category-card ${
+              preset === activePreset ? "active" : ""
+            }" data-preset-card="${preset}" type="button">
+              <h3>${preset}</h3>
+              <p>${descriptions[preset] || "Custom player evaluation preset."}</p>
+            </button>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function table(headers, rows) {
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>${headers.map((header) => `<th>${header}</th>`).join("")}</tr>
+        </thead>
+        <tbody>
+          ${rows.join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+async function init() {
+  try {
+    [
+      state.profiles,
+      state.similar,
+      state.metrics,
+      state.projections,
+      state.projectionMetrics,
+      state.breakoutMetrics,
+    ] = await Promise.all([
+      loadOptionalJson("data/player_profiles_slim.json").then((rows) =>
+        rows.length ? rows : loadJson("data/player_profiles.json")
+      ),
+      loadOptionalJson("data/similar_players.json"),
+      loadOptionalJson("data/model_metrics.json"),
+      loadOptionalJson("data/player_projections.json"),
+      loadOptionalJson("data/player_projection_metrics.json"),
+      loadOptionalJson("data/breakout_metrics.json"),
+    ]);
+
+    addStableMetrics();
+    mergeProjectionFieldsIntoProfiles();
+    addValueScores();
+    addSeasonPercentiles();
+
+    const names = playerNames();
+    const defaultA =
+      names.find((name) => name.includes("Stephen Curry")) || names[0] || null;
+    const defaultB =
+      names.find((name) => name.includes("Luka Doncic")) || names[1] || defaultA;
+
+    state.ui.playerA = state.ui.playerA || defaultA;
+    state.ui.seasonA = validSeasonForPlayer(state.ui.playerA, state.ui.seasonA);
+    state.ui.playerB = state.ui.playerB || defaultB;
+    state.ui.seasonB = validSeasonForPlayer(state.ui.playerB, state.ui.seasonB);
+    state.ui.leagueSeason = state.ui.leagueSeason || latestSeason();
+    state.ui.trendPlayer = state.ui.trendPlayer || defaultA;
+    state.ui.trendSeason = validSeasonForPlayer(state.ui.trendPlayer, state.ui.trendSeason);
+    state.ui.projectionSeason = state.ui.projectionSeason || latestSeason();
+    state.ui.similarityPlayer = state.ui.similarityPlayer || defaultA;
+    state.ui.similaritySeason = validSeasonForPlayer(
+      state.ui.similarityPlayer,
+      state.ui.similaritySeason
+    );
+    state.ui.shotPlayer = state.ui.shotPlayer || defaultA;
+    state.ui.shotSeason = validSeasonForPlayer(state.ui.shotPlayer, state.ui.shotSeason);
+
+    render();
+  } catch (error) {
+    document.getElementById("app").innerHTML = `
+      <div class="panel">
+        <h2>Data failed to load</h2>
+        <p>${escapeHtml(error.message)}</p>
+      </div>
+    `;
+  }
 }
 
 async function render() {
@@ -1223,11 +623,7 @@ async function render() {
   document.getElementById("nav").innerHTML = navItems
     .map(
       ([view, label]) => `
-        <button
-          class="${state.view === view ? "active" : ""}"
-          data-view="${view}"
-          type="button"
-        >
+        <button class="${state.view === view ? "active" : ""}" data-view="${view}" type="button">
           ${label}
         </button>
       `
@@ -1243,74 +639,894 @@ async function render() {
 
   const app = document.getElementById("app");
 
-  if (state.view === "trends") {
+  try {
+    if (state.view === "versus") {
+      await renderVersusView();
+      return;
+    }
+
+    if (state.view === "league") {
+      renderLeagueView();
+      return;
+    }
+
+    if (state.view === "trends") {
+      app.innerHTML = loadingMarkup("Loading player trend data...");
+      await renderTrendsView();
+      return;
+    }
+
+    if (state.view === "projection") {
+      renderProjectionView();
+      return;
+    }
+
+    if (state.view === "similarity") {
+      renderSimilarityView();
+      return;
+    }
+
+    if (state.view === "calibration") {
+      app.innerHTML = loadingMarkup("Loading calibration data...");
+      await ensureCalibrationLoaded();
+      renderCalibrationView();
+      return;
+    }
+
+    if (state.view === "player") {
+      app.innerHTML = loadingMarkup("Loading shot detail data...");
+      await renderShotDetailView();
+      return;
+    }
+
+    if (state.view === "models") {
+      renderModelsView();
+      return;
+    }
+
+    await renderVersusView();
+  } catch (error) {
     app.innerHTML = `
-      <div class="loading-card">
-        <span class="loader"></span>
-        Loading player trend data...
+      <div class="panel">
+        <h2>This view could not load</h2>
+        <p>${escapeHtml(error.message)}</p>
       </div>
     `;
-
-    await ensureGameProfilesLoaded();
-    renderTrendsView();
-    return;
   }
-
-  if (state.view === "calibration") {
-    app.innerHTML = `
-      <div class="loading-card">
-        <span class="loader"></span>
-        Loading calibration data...
-      </div>
-    `;
-
-    await ensureCalibrationLoaded();
-    renderCalibrationView();
-    return;
-  }
-
-  if (state.view === "player") {
-    app.innerHTML = `
-      <div class="loading-card">
-        <span class="loader"></span>
-        Loading shot detail data...
-      </div>
-    `;
-
-    await ensureShotDataLoaded();
-    renderPlayerView();
-    return;
-  }
-
-  if (state.view === "versus") {
-    renderVersusView();
-    return;
-  }
-
-  if (state.view === "league") {
-    renderLeagueView();
-    return;
-  }
-
-  if (state.view === "projection") {
-    renderProjectionView();
-    return;
-  }
-
-  if (state.view === "similarity") {
-    renderSimilarityView();
-    return;
-  }
-
-  if (state.view === "models") {
-    renderModelsView();
-    return;
-  }
-
-  renderVersusView();
 }
 
-init().catch((error) => {
-  console.error(error);
-  document.body.innerHTML = `<pre>${error.message}</pre>`;
-});
+function loadingMarkup(text) {
+  return `
+    <div class="loading-card">
+      <span class="loader"></span>
+      ${text}
+    </div>
+  `;
+}
+
+async function renderVersusView() {
+  const app = document.getElementById("app");
+
+  state.ui.seasonA = validSeasonForPlayer(state.ui.playerA, state.ui.seasonA);
+  state.ui.seasonB = validSeasonForPlayer(state.ui.playerB, state.ui.seasonB);
+
+  const rowA = profileRow(state.ui.playerA, state.ui.seasonA);
+  const rowB = profileRow(state.ui.playerB, state.ui.seasonB);
+
+  app.innerHTML = `
+    <section class="panel fade-in">
+      <div class="controls">
+        <div class="field">
+          <label>Player A</label>
+          <select id="playerA">${playerOptions(state.ui.playerA)}</select>
+        </div>
+        <div class="field">
+          <label>Season A</label>
+          <select id="seasonA">${seasonOptionsForPlayer(state.ui.playerA, state.ui.seasonA)}</select>
+        </div>
+        <div class="field">
+          <label>Player B</label>
+          <select id="playerB">${playerOptions(state.ui.playerB)}</select>
+        </div>
+        <div class="field">
+          <label>Season B</label>
+          <select id="seasonB">${seasonOptionsForPlayer(state.ui.playerB, state.ui.seasonB)}</select>
+        </div>
+      </div>
+    </section>
+
+    <section class="visual-grid">
+      ${playerSummaryCard(rowA, `${rowA?.SEASON || ""} comparison side A`)}
+      ${playerSummaryCard(rowB, `${rowB?.SEASON || ""} comparison side B`)}
+
+      <div class="full-panel">
+        <h2>Scoring Profile</h2>
+        <div id="versus-bars" class="chart"></div>
+      </div>
+
+      <div class="chart-card">
+        <h2>Style Radar</h2>
+        <div id="style-radar" class="chart"></div>
+      </div>
+
+      <div class="chart-card">
+        <h2>Season Progression</h2>
+        <div id="season-progression" class="chart"></div>
+      </div>
+
+      <div class="chart-card">
+        <h2>Box Score Role</h2>
+        <div id="box-role" class="chart"></div>
+      </div>
+
+      <div class="chart-card">
+        <h2>Zone Comparison</h2>
+        <div id="zone-compare" class="chart"></div>
+      </div>
+    </section>
+  `;
+
+  document.getElementById("playerA").addEventListener("change", (event) => {
+    state.ui.playerA = event.target.value;
+    state.ui.seasonA = validSeasonForPlayer(state.ui.playerA, state.ui.seasonA);
+    render();
+  });
+
+  document.getElementById("seasonA").addEventListener("change", (event) => {
+    state.ui.seasonA = event.target.value;
+    render();
+  });
+
+  document.getElementById("playerB").addEventListener("change", (event) => {
+    state.ui.playerB = event.target.value;
+    state.ui.seasonB = validSeasonForPlayer(state.ui.playerB, state.ui.seasonB);
+    render();
+  });
+
+  document.getElementById("seasonB").addEventListener("change", (event) => {
+    state.ui.seasonB = event.target.value;
+    render();
+  });
+
+  if (!rowA || !rowB) return;
+
+  renderVersusBars(rowA, rowB);
+  renderStyleRadar(rowA, rowB);
+  renderSeasonProgression(rowA, rowB);
+  renderBoxRole(rowA, rowB);
+
+  const [zonesA, zonesB] = await Promise.all([
+    loadPlayerZones(rowA.PLAYER_ID, rowA.SEASON),
+    loadPlayerZones(rowB.PLAYER_ID, rowB.SEASON),
+  ]);
+
+  renderZoneCompare(rowA, rowB, zonesA, zonesB);
+}
+
+function renderVersusBars(rowA, rowB) {
+  const labels = ["Actual PPS", "Expected PPS", "Shot Making", "Player Edge", "TS%", "Usage"];
+  const metrics = [
+    "actual_points_per_shot",
+    "league_expected_pps",
+    "shot_making_per_100_stable",
+    "player_adjusted_edge_per_100_stable",
+    "TS_PCT",
+    "USG_PCT",
+  ];
+
+  renderPlot(
+    "versus-bars",
+    [
+      {
+        type: "bar",
+        name: `${rowA.PLAYER_NAME} ${rowA.SEASON}`,
+        x: labels,
+        y: metrics.map((metric) => numberValue(rowA[metric])),
+        marker: { color: "#2563eb" },
+      },
+      {
+        type: "bar",
+        name: `${rowB.PLAYER_NAME} ${rowB.SEASON}`,
+        x: labels,
+        y: metrics.map((metric) => numberValue(rowB[metric])),
+        marker: { color: "#f97316" },
+      },
+    ],
+    { barmode: "group" }
+  );
+}
+
+function renderStyleRadar(rowA, rowB) {
+  const labels = ["Efficiency", "Usage", "Shot Making", "Player Edge", "Impact"];
+  const metrics = [
+    "TS_PCT_percentile",
+    "USG_PCT_percentile",
+    "shot_making_per_100_stable_percentile",
+    "player_adjusted_edge_per_100_stable_percentile",
+    "all_around_value_score_percentile",
+  ];
+
+  renderPlot(
+    "style-radar",
+    [
+      {
+        type: "scatterpolar",
+        r: metrics.map((metric) => numberValue(rowA[metric]) * 100),
+        theta: labels,
+        fill: "toself",
+        name: `${rowA.PLAYER_NAME} ${rowA.SEASON}`,
+      },
+      {
+        type: "scatterpolar",
+        r: metrics.map((metric) => numberValue(rowB[metric]) * 100),
+        theta: labels,
+        fill: "toself",
+        name: `${rowB.PLAYER_NAME} ${rowB.SEASON}`,
+      },
+    ],
+    {
+      polar: { radialaxis: { visible: true, range: [0, 100] } },
+      showlegend: true,
+    }
+  );
+}
+
+function renderSeasonProgression(rowA, rowB) {
+  const rowsA = state.profiles
+    .filter((row) => row.PLAYER_NAME === rowA.PLAYER_NAME)
+    .sort((a, b) => String(a.SEASON).localeCompare(String(b.SEASON)));
+
+  const rowsB = state.profiles
+    .filter((row) => row.PLAYER_NAME === rowB.PLAYER_NAME)
+    .sort((a, b) => String(a.SEASON).localeCompare(String(b.SEASON)));
+
+  renderPlot(
+    "season-progression",
+    [
+      {
+        type: "scatter",
+        mode: "lines+markers",
+        name: rowA.PLAYER_NAME,
+        x: rowsA.map((row) => row.SEASON),
+        y: rowsA.map((row) => numberValue(row.scoring_value_score)),
+      },
+      {
+        type: "scatter",
+        mode: "lines+markers",
+        name: rowB.PLAYER_NAME,
+        x: rowsB.map((row) => row.SEASON),
+        y: rowsB.map((row) => numberValue(row.scoring_value_score)),
+      },
+    ],
+    { yaxis: { title: "Scoring value score" } }
+  );
+}
+
+function renderBoxRole(rowA, rowB) {
+  const labels = ["PTS", "AST", "REB", "Usage", "Net Rating"];
+  const metrics = ["PTS", "AST", "REB", "USG_PCT", "NET_RATING"];
+
+  renderPlot(
+    "box-role",
+    [
+      {
+        type: "bar",
+        name: `${rowA.PLAYER_NAME} ${rowA.SEASON}`,
+        x: labels,
+        y: metrics.map((metric) => numberValue(rowA[metric])),
+        marker: { color: "#2563eb" },
+      },
+      {
+        type: "bar",
+        name: `${rowB.PLAYER_NAME} ${rowB.SEASON}`,
+        x: labels,
+        y: metrics.map((metric) => numberValue(rowB[metric])),
+        marker: { color: "#f97316" },
+      },
+    ],
+    { barmode: "group" }
+  );
+}
+
+function renderZoneCompare(rowA, rowB, zonesA, zonesB) {
+  const zoneNames = unique([
+    ...zonesA.map((row) => row.SHOT_ZONE_BASIC),
+    ...zonesB.map((row) => row.SHOT_ZONE_BASIC),
+  ]);
+
+  const zoneValue = (rows, zone) => {
+    const row = rows.find((item) => item.SHOT_ZONE_BASIC === zone);
+    return row ? numberValue(row.actual_points_per_shot) : 0;
+  };
+
+  renderPlot(
+    "zone-compare",
+    [
+      {
+        type: "bar",
+        name: `${rowA.PLAYER_NAME} ${rowA.SEASON}`,
+        x: zoneNames,
+        y: zoneNames.map((zone) => zoneValue(zonesA, zone)),
+        marker: { color: "#2563eb" },
+      },
+      {
+        type: "bar",
+        name: `${rowB.PLAYER_NAME} ${rowB.SEASON}`,
+        x: zoneNames,
+        y: zoneNames.map((zone) => zoneValue(zonesB, zone)),
+        marker: { color: "#f97316" },
+      },
+    ],
+    { barmode: "group", xaxis: { tickangle: -25 } }
+  );
+}
+
+function renderLeagueView() {
+  const app = document.getElementById("app");
+
+  const seasonRows = state.profiles
+    .filter((row) => row.SEASON === state.ui.leagueSeason)
+    .filter((row) => numberValue(row.shots) >= numberValue(state.ui.minShots))
+    .filter((row) => numberValue(row.USG_PCT) >= numberValue(state.ui.minUsage))
+    .filter((row) => numberValue(row.TS_PCT) >= numberValue(state.ui.minTs))
+    .filter((row) => !row.AGE || numberValue(row.AGE) <= numberValue(state.ui.maxAge))
+    .filter(
+      (row) =>
+        numberValue(row.breakout_probability) >= numberValue(state.ui.minBreakout)
+    )
+    .map((row) => ({
+      ...row,
+      ranking_score: rankingScore(row, state.ui.rankingPreset),
+    }))
+    .sort((a, b) => b.ranking_score - a.ranking_score)
+    .slice(0, 75);
+
+  app.innerHTML = `
+    <section class="panel fade-in">
+      <h2>League Rankings</h2>
+      <div class="controls">
+        <div class="field">
+          <label>Season</label>
+          <select id="leagueSeason">${seasonOptions(state.ui.leagueSeason)}</select>
+        </div>
+        <div class="field">
+          <label>Min Shots</label>
+          <input id="minShots" type="number" value="${state.ui.minShots}" />
+        </div>
+        <div class="field">
+          <label>Min Usage</label>
+          <input id="minUsage" type="number" step="0.01" value="${state.ui.minUsage}" />
+        </div>
+        <div class="field">
+          <label>Min TS%</label>
+          <input id="minTs" type="number" step="0.01" value="${state.ui.minTs}" />
+        </div>
+        <div class="field">
+          <label>Max Age</label>
+          <input id="maxAge" type="number" value="${state.ui.maxAge}" />
+        </div>
+      </div>
+      ${rankingPresetCards(state.ui.rankingPreset)}
+    </section>
+
+    <section class="table-card">
+      ${table(
+        ["Rank", "Player", "Season", "Team", "Score", "Scoring %ile", "PPS", "TS%", "Usage", "Shot Making", "Player Edge", "Shots"],
+        seasonRows.map(
+          (row, index) => `
+            <tr>
+              <td>${index + 1}</td>
+              <td>${escapeHtml(row.PLAYER_NAME)}</td>
+              <td>${row.SEASON}</td>
+              <td>${escapeHtml(row.TEAM_ABBREVIATION || "-")}</td>
+              <td>${fmt(row.ranking_score, 3)}</td>
+              <td>${pct(row.scoring_value_score_percentile, 0)}</td>
+              <td>${fmt(row.actual_points_per_shot, 3)}</td>
+              <td>${pct(row.TS_PCT, 1)}</td>
+              <td>${pct(row.USG_PCT, 1)}</td>
+              <td class="${metricClass(row.shot_making_per_100_stable)}">${signed(row.shot_making_per_100_stable, 2)}</td>
+              <td class="${metricClass(row.player_adjusted_edge_per_100_stable)}">${signed(row.player_adjusted_edge_per_100_stable, 2)}</td>
+              <td>${fmt(row.shots, 0)}</td>
+            </tr>
+          `
+        )
+      )}
+    </section>
+  `;
+
+  document.getElementById("leagueSeason").addEventListener("change", (event) => {
+    state.ui.leagueSeason = event.target.value;
+    render();
+  });
+
+  ["minShots", "minUsage", "minTs", "maxAge"].forEach((id) => {
+    document.getElementById(id).addEventListener("change", (event) => {
+      state.ui[id] = Number(event.target.value);
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-preset-card]").forEach((card) => {
+    card.addEventListener("click", () => {
+      state.ui.rankingPreset = card.dataset.presetCard;
+      render();
+    });
+  });
+}
+
+async function renderTrendsView() {
+  const app = document.getElementById("app");
+
+  state.ui.trendSeason = validSeasonForPlayer(
+    state.ui.trendPlayer,
+    state.ui.trendSeason
+  );
+
+  const row = profileRow(state.ui.trendPlayer, state.ui.trendSeason);
+  const games = row ? await loadPlayerGames(row.PLAYER_ID, row.SEASON) : [];
+
+  app.innerHTML = `
+    <section class="panel fade-in">
+      <h2>Player Trends</h2>
+      <div class="controls">
+        <div class="field">
+          <label>Player</label>
+          <select id="trendPlayer">${playerOptions(state.ui.trendPlayer)}</select>
+        </div>
+        <div class="field">
+          <label>Season</label>
+          <select id="trendSeason">${seasonOptionsForPlayer(state.ui.trendPlayer, state.ui.trendSeason)}</select>
+        </div>
+      </div>
+    </section>
+
+    <section class="visual-grid">
+      ${playerSummaryCard(row, "Selected trend profile")}
+      <div class="card">
+        <h2>Game Log Size</h2>
+        <div class="stats-grid">
+          ${statCard("Games Loaded", fmt(games.length, 0))}
+          ${statCard("Avg PTS", fmt(avg(games, "PTS"), 1))}
+          ${statCard("Avg TS%", pct(avg(games, "TS_PCT"), 1))}
+          ${statCard("Avg Edge", signed(avg(games, "player_adjusted_edge_per_100"), 2))}
+        </div>
+      </div>
+      <div class="full-panel">
+        <h2>Game by Game Trend</h2>
+        <div id="trend-chart" class="chart"></div>
+      </div>
+    </section>
+  `;
+
+  document.getElementById("trendPlayer").addEventListener("change", (event) => {
+    state.ui.trendPlayer = event.target.value;
+    state.ui.trendSeason = validSeasonForPlayer(state.ui.trendPlayer, state.ui.trendSeason);
+    render();
+  });
+
+  document.getElementById("trendSeason").addEventListener("change", (event) => {
+    state.ui.trendSeason = event.target.value;
+    render();
+  });
+
+  renderPlot(
+    "trend-chart",
+    [
+      {
+        type: "scatter",
+        mode: "lines+markers",
+        name: "PTS",
+        x: games.map((game) => game.GAME_DATE || game.GAME_ID),
+        y: games.map((game) => numberValue(game.PTS)),
+      },
+      {
+        type: "scatter",
+        mode: "lines+markers",
+        name: "Shot edge",
+        yaxis: "y2",
+        x: games.map((game) => game.GAME_DATE || game.GAME_ID),
+        y: games.map((game) => numberValue(game.player_adjusted_edge_per_100)),
+      },
+    ],
+    {
+      yaxis: { title: "Points" },
+      yaxis2: {
+        title: "Shot edge",
+        overlaying: "y",
+        side: "right",
+      },
+    }
+  );
+}
+
+function avg(rows, metric) {
+  const values = rows.map((row) => Number(row[metric])).filter(Number.isFinite);
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function renderProjectionView() {
+  const app = document.getElementById("app");
+
+  const rows = state.profiles
+    .filter((row) => row.SEASON === state.ui.projectionSeason)
+    .filter((row) => Number.isFinite(Number(row.breakout_probability)))
+    .sort((a, b) => numberValue(b.breakout_probability) - numberValue(a.breakout_probability))
+    .slice(0, 75);
+
+  app.innerHTML = `
+    <section class="panel fade-in">
+      <h2>Projection Lab</h2>
+      <div class="controls">
+        <div class="field">
+          <label>Base Season</label>
+          <select id="projectionSeason">${seasonOptions(state.ui.projectionSeason)}</select>
+        </div>
+      </div>
+    </section>
+
+    <section class="table-card">
+      ${table(
+        ["Rank", "Player", "Team", "Breakout", "Next PPS", "Next TS%", "Next Usage", "Current PPS", "Current Edge"],
+        rows.map(
+          (row, index) => `
+            <tr>
+              <td>${index + 1}</td>
+              <td>${escapeHtml(row.PLAYER_NAME)}</td>
+              <td>${escapeHtml(row.TEAM_ABBREVIATION || "-")}</td>
+              <td>${pct(row.breakout_probability, 1)}</td>
+              <td>${fmt(row.projected_next_actual_points_per_shot, 3)}</td>
+              <td>${pct(row.projected_next_TS_PCT, 1)}</td>
+              <td>${pct(row.projected_next_USG_PCT, 1)}</td>
+              <td>${fmt(row.actual_points_per_shot, 3)}</td>
+              <td class="${metricClass(row.player_adjusted_edge_per_100_stable)}">${signed(row.player_adjusted_edge_per_100_stable, 2)}</td>
+            </tr>
+          `
+        )
+      )}
+    </section>
+  `;
+
+  document.getElementById("projectionSeason").addEventListener("change", (event) => {
+    state.ui.projectionSeason = event.target.value;
+    render();
+  });
+}
+
+function renderSimilarityView() {
+  const app = document.getElementById("app");
+
+  state.ui.similaritySeason = validSeasonForPlayer(
+    state.ui.similarityPlayer,
+    state.ui.similaritySeason
+  );
+
+  const row = profileRow(state.ui.similarityPlayer, state.ui.similaritySeason);
+  const matches = similarRowsFor(row).slice(0, 20);
+
+  app.innerHTML = `
+    <section class="panel fade-in">
+      <h2>Similarity Lab</h2>
+      <div class="controls">
+        <div class="field">
+          <label>Player</label>
+          <select id="similarityPlayer">${playerOptions(state.ui.similarityPlayer)}</select>
+        </div>
+        <div class="field">
+          <label>Season</label>
+          <select id="similaritySeason">${seasonOptionsForPlayer(state.ui.similarityPlayer, state.ui.similaritySeason)}</select>
+        </div>
+      </div>
+    </section>
+
+    <section class="visual-grid">
+      ${playerSummaryCard(row, "Similarity anchor")}
+      <div class="table-card">
+        <h2>Closest Profiles</h2>
+        ${table(
+          ["Player", "Season", "Similarity", "PPS", "TS%", "Usage", "Edge"],
+          matches.map(
+            (match) => `
+              <tr>
+                <td>${escapeHtml(match.PLAYER_NAME || match.similar_player || "-")}</td>
+                <td>${escapeHtml(match.SEASON || match.similar_season || "-")}</td>
+                <td>${fmt(match.similarity || match.score, 3)}</td>
+                <td>${fmt(match.actual_points_per_shot, 3)}</td>
+                <td>${pct(match.TS_PCT, 1)}</td>
+                <td>${pct(match.USG_PCT, 1)}</td>
+                <td>${signed(match.player_adjusted_edge_per_100_stable, 2)}</td>
+              </tr>
+            `
+          )
+        )}
+      </div>
+    </section>
+  `;
+
+  document.getElementById("similarityPlayer").addEventListener("change", (event) => {
+    state.ui.similarityPlayer = event.target.value;
+    state.ui.similaritySeason = validSeasonForPlayer(
+      state.ui.similarityPlayer,
+      state.ui.similaritySeason
+    );
+    render();
+  });
+
+  document.getElementById("similaritySeason").addEventListener("change", (event) => {
+    state.ui.similaritySeason = event.target.value;
+    render();
+  });
+}
+
+function similarRowsFor(row) {
+  if (!row) return [];
+
+  const direct = state.similar.filter(
+    (item) =>
+      String(item.PLAYER_ID) === String(row.PLAYER_ID) &&
+      String(item.SEASON) === String(row.SEASON)
+  );
+
+  if (direct.length) return direct;
+
+  const features = [
+    "actual_points_per_shot",
+    "league_expected_pps",
+    "TS_PCT",
+    "USG_PCT",
+    "shot_making_per_100_stable",
+    "player_adjusted_edge_per_100_stable",
+  ];
+
+  return state.profiles
+    .filter(
+      (candidate) =>
+        !(
+          String(candidate.PLAYER_ID) === String(row.PLAYER_ID) &&
+          candidate.SEASON === row.SEASON
+        )
+    )
+    .map((candidate) => {
+      const distance = Math.sqrt(
+        features.reduce(
+          (sum, feature) =>
+            sum + (numberValue(candidate[feature]) - numberValue(row[feature])) ** 2,
+          0
+        )
+      );
+
+      return {
+        ...candidate,
+        similarity: 1 / (1 + distance),
+      };
+    })
+    .sort((a, b) => b.similarity - a.similarity);
+}
+
+async function renderShotDetailView() {
+  const app = document.getElementById("app");
+
+  state.ui.shotSeason = validSeasonForPlayer(state.ui.shotPlayer, state.ui.shotSeason);
+
+  const row = profileRow(state.ui.shotPlayer, state.ui.shotSeason);
+  const shots = row ? await loadShotFile(row.PLAYER_ID, row.SEASON) : [];
+  const zones = row ? await loadPlayerZones(row.PLAYER_ID, row.SEASON) : [];
+
+  app.innerHTML = `
+    <section class="panel fade-in">
+      <h2>Shot Detail</h2>
+      <div class="controls">
+        <div class="field">
+          <label>Player</label>
+          <select id="shotPlayer">${playerOptions(state.ui.shotPlayer)}</select>
+        </div>
+        <div class="field">
+          <label>Season</label>
+          <select id="shotSeason">${seasonOptionsForPlayer(state.ui.shotPlayer, state.ui.shotSeason)}</select>
+        </div>
+      </div>
+    </section>
+
+    <section class="visual-grid">
+      ${playerSummaryCard(row, "Shot detail profile")}
+      <div class="card">
+        <h2>Shot File</h2>
+        <div class="stats-grid">
+          ${statCard("Shots Loaded", fmt(shots.length, 0))}
+          ${statCard("Zones", fmt(zones.length, 0))}
+          ${statCard("Actual PPS", fmt(row?.actual_points_per_shot, 3))}
+          ${statCard("Expected PPS", fmt(row?.league_expected_pps, 3))}
+        </div>
+      </div>
+
+      <div class="full-panel">
+        <h2>Interactive Shot Map</h2>
+        <div id="shot-map" class="chart"></div>
+      </div>
+
+      <div class="full-panel">
+        <h2>Zone Value</h2>
+        <div id="shot-zone-bars" class="chart"></div>
+      </div>
+    </section>
+  `;
+
+  document.getElementById("shotPlayer").addEventListener("change", (event) => {
+    state.ui.shotPlayer = event.target.value;
+    state.ui.shotSeason = validSeasonForPlayer(state.ui.shotPlayer, state.ui.shotSeason);
+    render();
+  });
+
+  document.getElementById("shotSeason").addEventListener("change", (event) => {
+    state.ui.shotSeason = event.target.value;
+    render();
+  });
+
+  renderShotMap(shots);
+  renderShotZoneBars(zones);
+}
+
+function renderShotMap(shots) {
+  const made = shots.filter((shot) => numberValue(shot.SHOT_MADE_FLAG) === 1);
+  const missed = shots.filter((shot) => numberValue(shot.SHOT_MADE_FLAG) !== 1);
+
+  renderPlot(
+    "shot-map",
+    [
+      {
+        type: "scattergl",
+        mode: "markers",
+        name: "Missed",
+        x: missed.map((shot) => numberValue(shot.LOC_X)),
+        y: missed.map((shot) => numberValue(shot.LOC_Y)),
+        marker: { color: "rgba(220,38,38,0.38)", size: 6 },
+        text: missed.map((shot) => shot.ACTION_TYPE || shot.SHOT_ZONE_BASIC || ""),
+      },
+      {
+        type: "scattergl",
+        mode: "markers",
+        name: "Made",
+        x: made.map((shot) => numberValue(shot.LOC_X)),
+        y: made.map((shot) => numberValue(shot.LOC_Y)),
+        marker: { color: "rgba(22,163,74,0.48)", size: 6 },
+        text: made.map((shot) => shot.ACTION_TYPE || shot.SHOT_ZONE_BASIC || ""),
+      },
+    ],
+    {
+      xaxis: { range: [-260, 260], zeroline: false, title: "Court X" },
+      yaxis: { range: [-60, 430], zeroline: false, title: "Court Y" },
+      height: 560,
+    }
+  );
+}
+
+function renderShotZoneBars(zones) {
+  renderPlot(
+    "shot-zone-bars",
+    [
+      {
+        type: "bar",
+        name: "Actual PPS",
+        x: zones.map((zone) => zone.SHOT_ZONE_BASIC || zone.SHOT_ZONE_AREA),
+        y: zones.map((zone) => numberValue(zone.actual_points_per_shot)),
+        marker: { color: "#2563eb" },
+      },
+      {
+        type: "bar",
+        name: "Expected PPS",
+        x: zones.map((zone) => zone.SHOT_ZONE_BASIC || zone.SHOT_ZONE_AREA),
+        y: zones.map((zone) => numberValue(zone.league_expected_pps)),
+        marker: { color: "#f97316" },
+      },
+    ],
+    { barmode: "group", xaxis: { tickangle: -25 } }
+  );
+}
+
+function renderCalibrationView() {
+  const app = document.getElementById("app");
+
+  app.innerHTML = `
+    <section class="visual-grid">
+      <div class="table-card">
+        <h2>Calibration Metrics</h2>
+        ${table(
+          Object.keys(state.calibrationMetrics[0] || { metric: "", value: "" }),
+          state.calibrationMetrics.map(
+            (row) =>
+              `<tr>${Object.values(row)
+                .map((value) => `<td>${escapeHtml(fmtMaybe(value))}</td>`)
+                .join("")}</tr>`
+          )
+        )}
+      </div>
+      <div class="chart-card">
+        <h2>Calibration Curve</h2>
+        <div id="calibration-chart" class="chart"></div>
+      </div>
+    </section>
+  `;
+
+  renderPlot(
+    "calibration-chart",
+    [
+      {
+        type: "scatter",
+        mode: "lines+markers",
+        name: "Model",
+        x: state.calibrationCurve.map(
+          (row) => numberValue(row.predicted_probability || row.predicted || row.mean_predicted_value)
+        ),
+        y: state.calibrationCurve.map(
+          (row) => numberValue(row.actual_make_rate || row.actual || row.fraction_of_positives)
+        ),
+      },
+      {
+        type: "scatter",
+        mode: "lines",
+        name: "Perfect",
+        x: [0, 1],
+        y: [0, 1],
+        line: { dash: "dash", color: "#64748b" },
+      },
+    ],
+    {
+      xaxis: { title: "Predicted make probability", range: [0, 1] },
+      yaxis: { title: "Actual make rate", range: [0, 1] },
+    }
+  );
+}
+
+function fmtMaybe(value) {
+  const number = Number(value);
+  if (Number.isFinite(number)) return fmt(number, 4);
+  return value;
+}
+
+function renderModelsView() {
+  const app = document.getElementById("app");
+
+  app.innerHTML = `
+    <section class="panel fade-in">
+      <h2>Models</h2>
+      <p>
+        The site uses model outputs as player evaluation signals instead of treating
+        single-shot prediction as the whole product.
+      </p>
+    </section>
+
+    <section class="table-card">
+      <h2>Model Metrics</h2>
+      ${table(
+        Object.keys(state.metrics[0] || { model: "", log_loss: "", roc_auc: "", brier: "" }),
+        state.metrics.map(
+          (row) =>
+            `<tr>${Object.values(row)
+              .map((value) => `<td>${escapeHtml(fmtMaybe(value))}</td>`)
+              .join("")}</tr>`
+        )
+      )}
+    </section>
+
+    <section class="visual-grid">
+      <div class="card">
+        <h2>Primary Signals</h2>
+        <div class="stats-grid">
+          ${statCard("Shot Quality", "Expected PPS")}
+          ${statCard("Shot Making", "Actual - Expected")}
+          ${statCard("Player Edge", "Adjusted")}
+          ${statCard("Projection", "Next Season")}
+        </div>
+      </div>
+      <div class="card">
+        <h2>Scaling Plan</h2>
+        <p>
+          Large files are loaded only when the user opens a detail view. Player,
+          season, zone, shot, and later team files can grow independently.
+        </p>
+      </div>
+    </section>
+  `;
+}
+
+document.addEventListener("DOMContentLoaded", init);
