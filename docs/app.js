@@ -548,6 +548,89 @@ function table(headers, rows) {
   `;
 }
 
+function playerSearchRows(query, season) {
+  const text = String(query || "").toLowerCase().trim();
+
+  return state.profiles
+    .filter((row) => !season || row.SEASON === season)
+    .filter((row) => {
+      if (!text) return true;
+
+      return [
+        row.PLAYER_NAME,
+        row.TEAM_ABBREVIATION,
+        row.SEASON,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(text);
+    })
+    .sort((a, b) => {
+      const scoreDiff =
+        Number(b.all_around_value_score || 0) -
+        Number(a.all_around_value_score || 0);
+
+      if (scoreDiff !== 0) return scoreDiff;
+
+      return String(a.PLAYER_NAME).localeCompare(String(b.PLAYER_NAME));
+    })
+    .slice(0, 30);
+}
+
+function percentileBadge(label, value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return `
+      <div class="percentile-badge">
+        <span>${label}</span>
+        <strong>-</strong>
+      </div>
+    `;
+  }
+
+  let tier = "low";
+
+  if (number >= 0.85) tier = "elite";
+  else if (number >= 0.65) tier = "good";
+  else if (number >= 0.35) tier = "average";
+
+  return `
+    <div class="percentile-badge ${tier}">
+      <span>${label}</span>
+      <strong>${Math.round(number * 100)}</strong>
+    </div>
+  `;
+}
+
+function percentileReport(row) {
+  if (!row) return "";
+
+  return `
+    <div class="percentile-report">
+      ${percentileBadge("Scoring", row.scoring_value_score_percentile)}
+      ${percentileBadge("Overall", row.all_around_value_score_percentile)}
+      ${percentileBadge("Shot Make", row.shot_making_per_100_stable_percentile)}
+      ${percentileBadge("Edge", row.player_adjusted_edge_per_100_stable_percentile)}
+      ${percentileBadge("TS", row.TS_PCT_percentile)}
+      ${percentileBadge("Usage", row.USG_PCT_percentile)}
+    </div>
+  `;
+}
+
+function setCompareSlot(playerName, season, slot) {
+  if (slot === "A") {
+    state.ui.playerA = playerName;
+    state.ui.seasonA = season;
+  } else {
+    state.ui.playerB = playerName;
+    state.ui.seasonB = season;
+  }
+
+  state.view = "versus";
+  render();
+}
+
 async function init() {
   try {
     [
@@ -610,6 +693,7 @@ async function render() {
   document.body.dataset.view = state.view;
 
   const navItems = [
+    ["finder", "Player Finder"],
     ["versus", "Player Compare"],
     ["league", "League Rankings"],
     ["trends", "Player Trends"],
@@ -640,6 +724,10 @@ async function render() {
   const app = document.getElementById("app");
 
   try {
+    if (state.view === "finder") {
+      renderFinderView();
+      return;
+    }
     if (state.view === "versus") {
       await renderVersusView();
       return;
@@ -834,6 +922,99 @@ function renderVersusBars(rowA, rowB) {
     ],
     { barmode: "group" }
   );
+}
+
+function renderFinderView() {
+  const app = document.getElementById("app");
+
+  if (!state.ui.finderSeason) {
+    state.ui.finderSeason = latestSeason();
+  }
+
+  if (state.ui.finderQuery === undefined) {
+    state.ui.finderQuery = "";
+  }
+
+  const rows = playerSearchRows(state.ui.finderQuery, state.ui.finderSeason);
+
+  app.innerHTML = `
+    <section class="panel fade-in">
+      <h2>Player Finder</h2>
+      <p>
+        Search players by name, team, or season and send them directly into the comparison lab.
+      </p>
+
+      <div class="controls">
+        <div class="field">
+          <label>Search</label>
+          <input id="finderQuery" type="search" value="${escapeHtml(state.ui.finderQuery)}" placeholder="Search player or team..." />
+        </div>
+
+        <div class="field">
+          <label>Season</label>
+          <select id="finderSeason">${seasonOptions(state.ui.finderSeason)}</select>
+        </div>
+      </div>
+    </section>
+
+    <section class="finder-grid">
+      ${rows
+        .map(
+          (row) => `
+            <article class="finder-card pulse-card">
+              <div class="finder-card-head">
+                <div>
+                  <p class="eyebrow">${escapeHtml(row.TEAM_ABBREVIATION || "-")} · ${escapeHtml(row.SEASON)}</p>
+                  <h3>${escapeHtml(row.PLAYER_NAME)}</h3>
+                </div>
+                <strong>${pct(row.scoring_value_score_percentile, 0)}</strong>
+              </div>
+
+              ${percentileReport(row)}
+
+              <div class="finder-stats">
+                <span>PPS <strong>${fmt(row.actual_points_per_shot, 3)}</strong></span>
+                <span>TS <strong>${pct(row.TS_PCT, 1)}</strong></span>
+                <span>USG <strong>${pct(row.USG_PCT, 1)}</strong></span>
+                <span>Edge <strong>${signed(row.player_adjusted_edge_per_100_stable, 2)}</strong></span>
+              </div>
+
+              <div class="finder-actions">
+                <button type="button" data-compare-a="${escapeHtml(row.PLAYER_NAME)}" data-season="${escapeHtml(row.SEASON)}">
+                  Set A
+                </button>
+                <button type="button" data-compare-b="${escapeHtml(row.PLAYER_NAME)}" data-season="${escapeHtml(row.SEASON)}">
+                  Set B
+                </button>
+              </div>
+            </article>
+          `
+        )
+        .join("")}
+    </section>
+  `;
+
+  document.getElementById("finderQuery").addEventListener("input", (event) => {
+    state.ui.finderQuery = event.target.value;
+    renderFinderView();
+  });
+
+  document.getElementById("finderSeason").addEventListener("change", (event) => {
+    state.ui.finderSeason = event.target.value;
+    renderFinderView();
+  });
+
+  document.querySelectorAll("[data-compare-a]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setCompareSlot(button.dataset.compareA, button.dataset.season, "A");
+    });
+  });
+
+  document.querySelectorAll("[data-compare-b]").forEach((button) => {
+    button.addEventListener("click", () => {
+      setCompareSlot(button.dataset.compareB, button.dataset.season, "B");
+    });
+  });
 }
 
 function renderStyleRadar(rowA, rowB) {
