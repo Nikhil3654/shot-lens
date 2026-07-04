@@ -936,7 +936,7 @@ function renderFinderView() {
   }
 
   app.innerHTML = `
-    <section class="panel fade-in">
+    <section class="panel fade-in finder-panel">
       <h2>Player Finder</h2>
       <p>
         Search players by name or team, inspect percentiles, and send players directly into comparison.
@@ -944,10 +944,10 @@ function renderFinderView() {
 
       <div class="controls">
         <div class="field">
-          <label>Search</label>
+          <label for="finderQuery">Search</label>
           <input
             id="finderQuery"
-            type="search"
+            type="text"
             value="${escapeHtml(state.ui.finderQuery)}"
             placeholder="Search player or team..."
             autocomplete="off"
@@ -955,7 +955,7 @@ function renderFinderView() {
         </div>
 
         <div class="field">
-          <label>Season</label>
+          <label for="finderSeason">Season</label>
           <select id="finderSeason">${seasonOptions(state.ui.finderSeason)}</select>
         </div>
       </div>
@@ -967,19 +967,13 @@ function renderFinderView() {
   const queryInput = document.getElementById("finderQuery");
   const seasonInput = document.getElementById("finderSeason");
 
-  let searchTimer = null;
-
-  queryInput.addEventListener("input", (event) => {
-    state.ui.finderQuery = event.target.value;
-
-    window.clearTimeout(searchTimer);
-    searchTimer = window.setTimeout(() => {
-      renderFinderResults();
-    }, 120);
+  queryInput.addEventListener("input", () => {
+    state.ui.finderQuery = queryInput.value;
+    renderFinderResults();
   });
 
-  seasonInput.addEventListener("change", (event) => {
-    state.ui.finderSeason = event.target.value;
+  seasonInput.addEventListener("change", () => {
+    state.ui.finderSeason = seasonInput.value;
     renderFinderResults();
   });
 
@@ -990,7 +984,10 @@ function renderFinderResults() {
   const results = document.getElementById("finderResults");
   if (!results) return;
 
-  const rows = playerSearchRows(state.ui.finderQuery, state.ui.finderSeason).slice(0, 24);
+  const rows = playerSearchRows(
+    state.ui.finderQuery,
+    state.ui.finderSeason
+  ).slice(0, 24);
 
   if (!rows.length) {
     results.innerHTML = `

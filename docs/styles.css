@@ -837,4 +837,32 @@ tr:hover td {
   .footer {
     flex-direction: column;
   }
+  .finder-panel,
+  .finder-panel * {
+    pointer-events: auto !important;
+  }
+
+  #finderQuery,
+  #finderSeason {
+    position: relative !important;
+    z-index: 50 !important;
+    pointer-events: auto !important;
+    user-select: text !important;
+  }
+
+  #finderQuery {
+    cursor: text !important;
+  }
+
+  #finderResults {
+    position: relative;
+    z-index: 1;
+  }
+
+  .ambient,
+  .ambient-one,
+  .ambient-two,
+  .ambient-three {
+    pointer-events: none !important;
+  }
 }
