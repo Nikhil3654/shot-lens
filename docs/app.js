@@ -1529,4 +1529,63 @@ function renderModelsView() {
   `;
 }
 
-document.addEventListener("DOMContentLoaded", init);
+function setControls(html = "") {
+  let controls = document.getElementById("controls");
+  const app = document.getElementById("app");
+
+  if (!app) return;
+
+  if (!controls) {
+    controls = document.createElement("section");
+    controls.id = "controls";
+    controls.className = "panel fade-in controls-shell";
+    app.before(controls);
+  }
+
+  controls.innerHTML = html;
+}
+
+window.addEventListener("error", (event) => {
+  const app = document.getElementById("app");
+
+  if (app) {
+    app.innerHTML = `
+      <div class="panel">
+        <h2>Site error</h2>
+        <p>${event.message}</p>
+      </div>
+    `;
+  }
+
+  console.error(event.error || event.message);
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  const app = document.getElementById("app");
+
+  if (app) {
+    app.innerHTML = `
+      <div class="panel">
+        <h2>Data loading error</h2>
+        <p>${event.reason?.message || event.reason}</p>
+      </div>
+    `;
+  }
+
+  console.error(event.reason);
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+  init().catch((error) => {
+    const app = document.getElementById("app");
+
+    app.innerHTML = `
+      <div class="panel">
+        <h2>App failed to start</h2>
+        <p>${error.message}</p>
+      </div>
+    `;
+
+    console.error(error);
+  });
+});

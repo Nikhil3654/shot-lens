@@ -686,4 +686,11 @@ tr:hover td {
   .footer {
     flex-direction: column;
   }
+  .controls-shell:empty {
+  display: none;
+}
+
+.controls-shell {
+  margin-bottom: 18px;
+}
 }
