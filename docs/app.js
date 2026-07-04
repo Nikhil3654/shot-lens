@@ -107,15 +107,13 @@ async function init() {
   try {
     [
       state.profiles,
-      state.zones,
       state.similar,
       state.metrics,
       state.projections,
       state.projectionMetrics,
       state.breakoutMetrics,
     ] = await Promise.all([
-      loadJson("data/player_profiles.json"),
-      loadJson("data/zone_profiles.json"),
+      loadJson("data/player_profiles_slim.json"),
       loadJson("data/similar_players.json"),
       loadJson("data/model_metrics.json"),
       loadJson("data/player_projections.json"),
@@ -123,6 +121,7 @@ async function init() {
       loadJson("data/breakout_metrics.json"),
     ]);
 
+    state.zones = [];
     state.shotIndex = [];
     state.gameProfiles = [];
     state.calibrationMetrics = [];
@@ -1137,6 +1136,43 @@ function addSeasonPercentiles() {
     "scoring_value_score",
     "all_around_value_score",
   ];
+
+const playerDataCache = new Map();
+
+function playerFolder(playerId) {
+  return `data/players/${playerId}`;
+}
+
+function safeSeason(season) {
+  return String(season).replace("/", "-");
+}
+
+function playerIdFromName(playerName) {
+  const row = state.profiles.find((profile) => profile.PLAYER_NAME === playerName);
+  return row ? String(row.PLAYER_ID) : null;
+}
+
+async function loadPlayerSeasonFile(playerId, season, kind) {
+  const key = `${kind}:${playerId}:${season}`;
+
+  if (playerDataCache.has(key)) {
+    return playerDataCache.get(key);
+  }
+
+  const path = `${playerFolder(playerId)}/${kind}_${safeSeason(season)}.json`;
+  const promise = loadJson(path).catch(() => []);
+
+  playerDataCache.set(key, promise);
+  return promise;
+}
+
+async function loadPlayerGames(playerId, season) {
+  return loadPlayerSeasonFile(playerId, season, "games");
+}
+
+async function loadPlayerZones(playerId, season) {
+  return loadPlayerSeasonFile(playerId, season, "zones");
+}
 
   const bySeason = new Map();
 
