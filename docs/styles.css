@@ -696,15 +696,19 @@ tr:hover td {
 
 .finder-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  grid-template-columns: repeat(3, minmax(280px, 1fr));
   gap: 16px;
+  margin-top: 18px;
 }
 
 .finder-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   padding: 18px;
   border: 1px solid rgba(148, 163, 184, 0.24);
   border-radius: var(--radius);
-  background: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.86);
   box-shadow: var(--shadow-soft);
 }
 
@@ -718,23 +722,36 @@ tr:hover td {
 .finder-card-head h3 {
   margin: 0;
   font-size: 20px;
+  line-height: 1.15;
 }
 
-.finder-card-head strong {
+.finder-score {
   display: grid;
   place-items: center;
-  min-width: 54px;
-  height: 54px;
+  min-width: 62px;
+  height: 62px;
   border-radius: 999px;
   color: white;
   background: linear-gradient(135deg, var(--accent), var(--accent-3));
+}
+
+.finder-score strong {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.finder-score span {
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+  opacity: 0.82;
 }
 
 .percentile-report {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 8px;
-  margin: 16px 0;
 }
 
 .percentile-badge {
@@ -746,7 +763,7 @@ tr:hover td {
 .percentile-badge span {
   display: block;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
   text-transform: uppercase;
 }
@@ -783,25 +800,31 @@ tr:hover td {
   gap: 8px;
 }
 
-.finder-stats span {
+.finder-stats div {
   padding: 10px;
   border-radius: 8px;
-  background: rgba(248, 250, 252, 0.9);
+  background: rgba(248, 250, 252, 0.95);
+}
+
+.finder-stats span {
+  display: block;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
 }
 
 .finder-stats strong {
   display: block;
-  color: var(--ink);
   margin-top: 3px;
+  color: var(--ink);
+  font-size: 15px;
 }
 
 .finder-actions {
   display: flex;
   gap: 8px;
-  margin-top: 16px;
+  margin-top: auto;
 }
 
 .finder-actions button {
@@ -816,6 +839,24 @@ tr:hover td {
 
 .finder-actions button:last-child {
   background: linear-gradient(135deg, var(--accent-2), #ea580c);
+}
+
+.empty-state {
+  grid-column: 1 / -1;
+  padding: 28px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: var(--shadow-soft);
+}
+
+.empty-state h3 {
+  margin: 0 0 6px;
+}
+
+.empty-state p {
+  margin: 0;
+  color: var(--muted);
 }
 
 @media (max-width: 1100px) {
