@@ -966,21 +966,36 @@ function renderFinderView() {
 
   const queryInput = document.getElementById("finderQuery");
   const seasonInput = document.getElementById("finderSeason");
+  const results = document.getElementById("finderResults");
 
-  queryInput.addEventListener("input", () => {
+  queryInput.oninput = () => {
     state.ui.finderQuery = queryInput.value;
-    renderFinderResults();
-  });
+    updateFinderResults();
+  };
 
-  seasonInput.addEventListener("change", () => {
+  seasonInput.onchange = () => {
     state.ui.finderSeason = seasonInput.value;
-    renderFinderResults();
-  });
+    updateFinderResults();
+  };
 
-  renderFinderResults();
+  results.onclick = (event) => {
+    const buttonA = event.target.closest("[data-compare-a]");
+    const buttonB = event.target.closest("[data-compare-b]");
+
+    if (buttonA) {
+      setCompareSlot(buttonA.dataset.compareA, buttonA.dataset.season, "A");
+      return;
+    }
+
+    if (buttonB) {
+      setCompareSlot(buttonB.dataset.compareB, buttonB.dataset.season, "B");
+    }
+  };
+
+  updateFinderResults();
 }
 
-function renderFinderResults() {
+function updateFinderResults() {
   const results = document.getElementById("finderResults");
   if (!results) return;
 
@@ -1058,18 +1073,6 @@ function renderFinderResults() {
       `
     )
     .join("");
-
-  results.querySelectorAll("[data-compare-a]").forEach((button) => {
-    button.addEventListener("click", () => {
-      setCompareSlot(button.dataset.compareA, button.dataset.season, "A");
-    });
-  });
-
-  results.querySelectorAll("[data-compare-b]").forEach((button) => {
-    button.addEventListener("click", () => {
-      setCompareSlot(button.dataset.compareB, button.dataset.season, "B");
-    });
-  });
 }
 
 function renderStyleRadar(rowA, rowB) {
