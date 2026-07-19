@@ -202,17 +202,6 @@ This lets the GitHub Pages version stay fast while still supporting more data ov
         partition_static_data.py
       README.md
 
-## Local Static Site
-
-To run the static site locally:
-
-    cd D:\shot-lens\docs
-    python -m http.server 8000
-
-Then open:
-
-    http://localhost:8000
-
 ## Kaggle Workflow
 
 The project is designed so heavier processing can happen in Kaggle notebooks instead of locally.
